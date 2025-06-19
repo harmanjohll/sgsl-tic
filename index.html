@@ -7,10 +7,10 @@
 
   <!-- Three.js for Text→Sign -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
-  
-  <!-- MediaPipe Hands for Sign→Text -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+  <!-- TensorFlow.js & Handpose -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.6.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose@0.0.7/dist/handpose.js"></script>
 
   <style>
     body { font-family: sans-serif; text-align: center; padding: 2rem; }
@@ -49,7 +49,7 @@
     <section id="signToText">
       <h2>2. Sign → Text</h2>
       <p id="signResult">(initializing…)</p>
-      <!-- video & canvas injected here -->
+      <!-- video & canvas will be injected here -->
     </section>
 
     <!-- 3. Contribute -->
@@ -61,14 +61,14 @@
 
   <script>
   (function(){
-    // --- LOGIN logic ---
+    // — LOGIN —
     const ALLOWED = '@btyss.moe.edu.sg';
     const loginDiv = document.getElementById('login');
     const appDiv   = document.getElementById('app');
     const emailIn  = document.getElementById('emailInput');
     const errorP   = document.getElementById('error');
 
-    document.getElementById('loginBtn').onclick = ()=> {
+    document.getElementById('loginBtn').onclick = () => {
       const e = emailIn.value.trim().toLowerCase();
       errorP.textContent = '';
       if (!e) {
@@ -79,11 +79,11 @@
         loginDiv.style.display = 'none';
         appDiv.style.display   = 'block';
         initTextToSign();
-        initSignToText();
+        initSignToText();  // now using handpose
       }
     };
 
-    // --- Text → Sign stub (rotating cube) ---
+    // — Text → Sign stub (rotating cube) —
     let scene, camera, renderer, cube;
     function initTextToSign(){
       const container = document.getElementById('avatarContainer');
@@ -107,8 +107,8 @@
       })();
     }
 
-    // --- Sign → Text with manual landmark drawing ---
-    function initSignToText(){
+    // — Sign → Text with TensorFlow.js Handpose —
+    async function initSignToText(){
       const section = document.getElementById('signToText');
       const video   = document.createElement('video');
       video.width   = 400; video.height = 300;
@@ -120,57 +120,45 @@
       section.appendChild(canvas);
 
       const resultP = document.getElementById('signResult');
+      const ctx = canvas.getContext('2d');
 
-      // Setup MediaPipe Hands
-      const hands = new Hands({
-        locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-      });
-      hands.setOptions({
-        maxNumHands: 1,
-        minDetectionConfidence: 0.7,
-        minTrackingConfidence: 0.7
-      });
-      hands.onResults(results => {
-        // Log for debugging
-        console.log('MediaPipe onResults:', results);
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // 1. Start webcam
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+      await new Promise(r => video.onloadedmetadata = r);
 
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length) {
-          resultP.textContent = `Detected ${results.multiHandLandmarks.length} hand(s)`;
-          // Draw each landmark as a red circle
+      // 2. Load handpose model
+      resultP.textContent = 'Loading handpose model…';
+      const model = await handpose.load();
+      resultP.textContent = 'Model loaded. Raise your hand.';
+
+      // 3. Detection loop
+      async function detect() {
+        const predictions = await model.estimateHands(video, true);
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+
+        if (predictions.length) {
+          resultP.textContent = `Detected ${predictions.length} hand(s)`;
+          // Draw red dots
           ctx.fillStyle = 'red';
-          for (const landmarks of results.multiHandLandmarks) {
-            landmarks.forEach(lm => {
-              const x = lm.x * canvas.width;
-              const y = lm.y * canvas.height;
-              ctx.beginPath();
-              ctx.arc(x, y, 5, 0, 2 * Math.PI);
-              ctx.fill();
-            });
-          }
+          predictions[0].landmarks.forEach(([x, y, z]) => {
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, 2*Math.PI);
+            ctx.fill();
+          });
         } else {
           resultP.textContent = 'No hands detected';
         }
-      });
-
-      // Start camera feed
-      const cameraFeed = new Camera(video, {
-        onFrame: async () => await hands.send({ image: video }),
-        width: 400, height: 300
-      });
-      cameraFeed.start();
+        requestAnimationFrame(detect);
+      }
+      detect();
     }
 
-    // --- Simple Text→Sign lookup stub ---
+    // — Lookup stub —
     document.getElementById('showSignBtn').onclick = () => {
-      const word = document.getElementById('wordInput').value.trim();
-      const result = document.getElementById('lookupResult');
-      if (!word) {
-        result.textContent = 'Please type a word first.';
-      } else {
-        result.textContent = `(Stub) Would show sign for “${word}” here.`;
-      }
+      const w = document.getElementById('wordInput').value.trim();
+      document.getElementById('lookupResult').textContent =
+        w ? `(Stub) Would show sign for “${w}”.` : 'Please type a word first.';
     };
   })();
   </script>
