@@ -45,17 +45,17 @@
     /* Sign→Text */
     #signToText {
       position: relative;
-      width: 400px;
+      width: 100%;
+      text-align: center;             /* <-- center children */
       margin: 1rem auto;
     }
     #signCanvas {
       border: 1px solid #666;
-      display: block;
+      display: inline-block;          /* <-- center when combined with text-align */
     }
-    /* hide raw video */
     #signVideo { display: none; }
 
-    /* Contribute (login + form) */
+    /* Contribute */
     #contribute > .subsection {
       margin-top: 1rem;
       text-align: left;
@@ -91,7 +91,7 @@
     <canvas id="signCanvas"></canvas>
   </section>
 
-  <!-- 3. Contribute (gated) -->
+  <!-- 3. Contribute -->
   <section id="contribute" class="section">
     <h2>3. Contribute a Sign</h2>
 
@@ -120,8 +120,8 @@
     let scene, camera, renderer, cube;
     function initTextToSign(){
       const container = document.getElementById('avatarContainer');
-      scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(75, 400/300, 0.1, 1000);
+      scene    = new THREE.Scene();
+      camera   = new THREE.PerspectiveCamera(75, 400/300, 0.1, 1000);
       renderer = new THREE.WebGLRenderer();
       renderer.setSize(400,300);
       container.appendChild(renderer.domElement);
@@ -142,7 +142,7 @@
     document.getElementById('showSignBtn').onclick = () => {
       const w = document.getElementById('wordInput').value.trim();
       document.getElementById('lookupResult').textContent =
-        w ? `(Stub) Show sign for “${w}”.` : 'Please type a word.';
+        w ? `(Stub) Show sign for “${w}".` : 'Please type a word.';
     };
 
     // — Sign→Text overlay via MediaPipe Hands —
@@ -152,18 +152,16 @@
       const resultP = document.getElementById('signResult');
       const ctx = canvas.getContext('2d');
 
-      // start webcam
+      // 1. Start webcam
       const stream = await navigator.mediaDevices.getUserMedia({video:true});
       video.srcObject = stream;
       await new Promise(r => video.onloadedmetadata = r);
 
-      // size canvas to video
-      canvas.width = video.videoWidth;
+      // 2. Canvas matches video resolution
+      canvas.width  = video.videoWidth;
       canvas.height = video.videoHeight;
-      canvas.style.width  = video.videoWidth + 'px';
-      canvas.style.height = video.videoHeight + 'px';
 
-      // load MediaPipe
+      // 3. Load MediaPipe
       resultP.textContent = 'Loading detector…';
       const hands = new Hands({
         locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
@@ -176,16 +174,15 @@
       });
       hands.onResults(drawHands);
 
-      // camera feed
-      const cam = new Camera(video, {
+      // 4. Camera feed
+      new Camera(video, {
         onFrame: async ()=> await hands.send({image:video}),
         width: video.videoWidth, height: video.videoHeight
-      });
-      cam.start();
+      }).start();
 
       function drawHands(results){
-        // draw video
-        ctx.drawImage(video, 0,0,canvas.width,canvas.height);
+        // draw video frame
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         ctx.lineWidth = 2; ctx.strokeStyle='red'; ctx.fillStyle='red';
 
         const list = results.multiHandLandmarks || [];
@@ -200,7 +197,7 @@
       }
     }
 
-    // initialize modules 1 & 2 immediately
+    // fire modules 1 & 2
     initTextToSign();
     initSignToText();
 
@@ -225,16 +222,12 @@
       }
     };
 
-    // stub upload handler
+    // stub upload
     document.getElementById('uploadBtn').onclick = () => {
       const lbl = document.getElementById('labelInput').value.trim();
       const vid = document.getElementById('videoInput').files[0];
       const status = document.getElementById('uploadStatus');
-      if (!lbl || !vid) {
-        status.textContent = 'Provide label & MP4.';
-      } else {
-        status.textContent = 'Uploaded! (stub)';
-      }
+      status.textContent = (lbl && vid) ? 'Uploaded! (stub)' : 'Provide label & MP4.';
     };
   })();
   </script>
