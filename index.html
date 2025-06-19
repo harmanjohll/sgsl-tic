@@ -8,9 +8,10 @@
   <!-- Three.js for Text→Sign -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
 
-  <!-- TensorFlow.js & Handpose for Sign→Text -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.6.0/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose@0.0.7/dist/handpose.js"></script>
+  <!-- MediaPipe Hands for Sign→Text -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
   <style>
     body { font-family: sans-serif; text-align: center; padding: 2rem; }
@@ -18,23 +19,24 @@
     input, button { font-size: 1rem; padding: 0.5rem; }
     #error { color: red; margin-top: 1rem; }
     section { margin-top: 2rem; border-top: 1px solid #ccc; padding-top: 1rem; }
+
     /* Text→Sign avatar container */
-    #avatarContainer { 
-      width: 400px; height: 300px; margin: 1rem auto; 
-      border: 1px solid #666; 
+    #avatarContainer {
+      width: 400px; height: 300px;
+      margin: 1rem auto; border: 1px solid #666;
     }
-    /* Sign→Text overlay */
+
+    /* Sign→Text container: will size to video */
     #signToText {
       position: relative;
-      width: 400px; height: 300px;
       margin: 1rem auto;
     }
-    #signToText video { display: none; }
-    #signToText canvas {
+    #signCanvas {
       border: 1px solid #666;
       display: block; margin: 0 auto;
-      width: 400px; height: 300px;
     }
+    /* Hide the raw video element completely */
+    #signVideo { display: none; }
   </style>
 </head>
 <body>
@@ -123,7 +125,7 @@
       })();
     }
 
-    // — Sign → Text with overlay canvas —
+    // — Sign → Text with MediaPipe Hands (supports 2 hands) —
     async function initSignToText(){
       const video   = document.getElementById('signVideo');
       const canvas  = document.getElementById('signCanvas');
@@ -135,55 +137,56 @@
       video.srcObject = stream;
       await new Promise(r => video.onloadedmetadata = r);
 
-      // 2. Load handpose model
-      resultP.textContent = 'Loading handpose model…';
-      const model = await handpose.load();
-      resultP.textContent = 'Model loaded. Raise your hand.';
+      // 2. Match canvas size to video’s actual resolution
+      canvas.width  = video.videoWidth;
+      canvas.height = video.videoHeight;
+      // Also constrain styling if you wish:
+      canvas.style.width  = video.videoWidth + 'px';
+      canvas.style.height = video.videoHeight + 'px';
 
-      // 3. Skeleton connections
-      const skeleton = [
-        [0,1],[1,2],[2,3],[3,4],
-        [0,5],[5,6],[6,7],[7,8],
-        [0,9],[9,10],[10,11],[11,12],
-        [0,13],[13,14],[14,15],[15,16],
-        [0,17],[17,18],[18,19],[19,20]
-      ];
+      // 3. Load MediaPipe Hands
+      resultP.textContent = 'Loading detector…';
+      const hands = new Hands({
+        locateFile: (file) => 
+          `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+      hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7
+      });
+      hands.onResults(onHandsResults);
 
-      // 4. Detection loop
-      async function detect(){
-        // draw video frame first
+      // 4. Run camera frames into detector
+      const cameraFeed = new Camera(video, {
+        onFrame: async () => { await hands.send({ image: video }); },
+        width: video.videoWidth,
+        height: video.videoHeight
+      });
+      cameraFeed.start();
+
+      // 5. Draw results
+      function onHandsResults(results) {
+        // draw the video frame
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        const predictions = await model.estimateHands(video, true);
-        ctx.lineWidth = 2;
+        ctx.lineWidth   = 2;
         ctx.strokeStyle = 'red';
         ctx.fillStyle   = 'red';
 
-        if (predictions.length) {
-          resultP.textContent = `Detected ${predictions.length} hand(s)`;
-          const landmarks = predictions[0].landmarks;
-
-          // draw skeleton lines
-          for (const [i, j] of skeleton) {
-            const [x1, y1] = landmarks[i];
-            const [x2, y2] = landmarks[j];
-            ctx.beginPath();
-            ctx.moveTo(x1, y1);
-            ctx.lineTo(x2, y2);
-            ctx.stroke();
+        const handsList = results.multiHandLandmarks || [];
+        if (handsList.length) {
+          resultP.textContent = `Detected ${handsList.length} hand(s)`;
+          for (const landmarks of handsList) {
+            // draw connections
+            drawConnectors(ctx, landmarks, HAND_CONNECTIONS, { color:'red', lineWidth:2 });
+            // draw landmarks
+            drawLandmarks(ctx, landmarks, { color:'red', lineWidth:1 });
           }
-          // draw landmark dots
-          landmarks.forEach(([x, y]) => {
-            ctx.beginPath();
-            ctx.arc(x, y, 5, 0, 2 * Math.PI);
-            ctx.fill();
-          });
         } else {
           resultP.textContent = 'No hands detected';
         }
-        requestAnimationFrame(detect);
       }
-      detect();
     }
 
     // — Text→Sign lookup stub —
