@@ -8,7 +8,7 @@
   <!-- Supabase JS client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    // ── REPLACE the below with your Supabase details ──
+    // ← Your Supabase project details:
     const SUPABASE_URL      = 'https://lywyeuotzluabeehbdgt.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5d3lldW90emx1YWJlZWhiZGd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAzMDk1OTMsImV4cCI6MjA2NTg4NTU5M30.Iwqd626SUywCXNJK3GGzwOp2D0ORfmO_CEqDtMCTnPg';
     const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -26,22 +26,10 @@
   <style>
     body { font-family:sans-serif; text-align:center; padding:2rem; margin:0 }
     .section { max-width:480px; margin:2rem auto; padding-top:1rem; border-top:1px solid #ccc }
-    input, button { font-size:1rem; padding:0.5rem }
-    #error { color:red; margin-top:0.5rem }
-
-    /* 1. Text→Sign */
-    #avatarContainer { width:400px; height:300px; margin:1rem auto; border:1px solid #666 }
-
-    /* 2. Sign→Text */
-    #signToText { position:relative; width:100%; text-align:center }
-    #signCanvas { border:1px solid #666; display:inline-block }
-    #signVideo { display:none }
-
-    /* 3. Contribute */
-    #contribute .subsection { margin-top:1rem; text-align:left }
-    #contribute label, #contribute input, #contribute button {
-      display:block; width:100%; box-sizing:border-box; margin-bottom:0.5rem
-    }
+    input, button { font-size:1rem; padding:0.5rem; margin:0.25rem }
+    #error, #captureStatus, #uploadStatus { color:red; margin-top:0.5rem }
+    #avatarContainer, #contribCanvas { border:1px solid #666; margin:1rem auto }
+    #contribCanvas { display:block }
   </style>
 </head>
 <body>
@@ -52,7 +40,7 @@
   <section id="textToSign" class="section">
     <h2>1. Text → Sign</h2>
     <label><input type="radio" name="model" value="male" checked/> Male</label>
-    <label><input type="radio" name="model" value="female"/> Female</label>
+    <label><input type="radio" name="model" value="female"/> Female</label><br/>
     <input type="text" id="wordInput" placeholder="Type a word…"/>
     <button id="showSignBtn">Show Sign</button>
     <p id="lookupResult"></p>
@@ -63,32 +51,25 @@
   <section id="signToText" class="section">
     <h2>2. Sign → Text</h2>
     <p id="signResult">(initializing…)</p>
-    <video id="signVideo" autoplay playsinline></video>
+    <video id="signVideo" autoplay playsinline style="display:none;"></video>
     <canvas id="signCanvas"></canvas>
   </section>
 
-  <!-- 3. Contribute -->
+  <!-- 3. Contribute (Landmark Capture) -->
   <section id="contribute" class="section">
     <h2>3. Contribute a Sign</h2>
-    <div id="contribLogin" class="subsection">
-      <label for="emailInput">Enter your school email:</label>
-      <input type="email" id="emailInput" placeholder="you@btyss.moe.edu.sg"/>
-      <button id="loginBtn">Sign In</button>
-      <p id="error"></p>
-    </div>
-    <div id="uploadForm" class="subsection" style="display:none;">
-      <label for="labelInput">Sign label (word/phrase):</label>
-      <input type="text" id="labelInput" placeholder="e.g. hello"/>
-      <label for="videoInput">Upload MP4 video:</label>
-      <input type="file" id="videoInput" accept="video/mp4"/>
-      <button id="uploadBtn">Upload Sign</button>
-      <p id="uploadStatus"></p>
-    </div>
+    <input type="text" id="labelInput" placeholder="Enter sign label…"/><br/>
+    <button id="startCapture">Start Capture</button>
+    <button id="stopCapture" disabled>Stop Capture</button>
+    <p id="captureStatus">(idle)</p>
+    <canvas id="contribCanvas" width="400" height="300"></canvas><br/>
+    <button id="uploadCapture" disabled>Upload Captured Sign</button>
+    <p id="uploadStatus"></p>
   </section>
 
   <script>
-  (function(){
-    // ── Section 1: Text→Sign ──
+  (async function(){
+    // — Section 1: Text→Sign setup (unchanged from before) —
     let scene, camera, renderer, currentModel;
     function initTextToSign(){
       const c = document.getElementById('avatarContainer');
@@ -114,9 +95,8 @@
         ? 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/CesiumMan/glTF/CesiumMan.gltf'
         : 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/Fox/glTF/Fox.gltf';
       if (currentModel) scene.remove(currentModel);
-      const loader = new THREE.GLTFLoader();
-      const gltf   = await new Promise((res,rej)=>
-        loader.load(url,res,undefined,rej)
+      const gltf = await new Promise((res,rej)=>
+        new THREE.GLTFLoader().load(url, res, undefined, rej)
       );
       currentModel = gltf.scene;
       currentModel.scale.set(1,1,1);
@@ -127,16 +107,12 @@
       const out = document.getElementById('lookupResult');
       if (!w) return out.textContent='Please type a word.';
       out.textContent = `Loading sign for “${w}”…`;
-      await loadLibrary();
-      if (window.signLibrary[w]) {
-        await loadAvatarModel();
-        out.textContent = `Showing sign for “${w}”.`;
-      } else {
-        out.textContent = `No sign found for “${w}”.`;
-      }
+      // (you can add a loadLibrary() here if you later store poses)
+      await loadAvatarModel();
+      out.textContent = `Showing sign for “${w}”.`;
     };
 
-    // ── Section 2: Sign→Text ──
+    // — Section 2: Sign→Text setup (unchanged) —
     async function initSignToText(){
       const video = document.getElementById('signVideo');
       const canvas= document.getElementById('signCanvas');
@@ -172,65 +148,82 @@
       }).start();
     }
 
-    // ── Section 3: Contribute via Supabase ──
-    const ALLOWED = '@btyss.moe.edu.sg';
-    document.getElementById('loginBtn').onclick = () => {
-      const e = document.getElementById('emailInput').value.trim().toLowerCase();
-      const err = document.getElementById('error'); err.textContent = '';
-      if (!e) err.textContent = 'Enter your email.';
-      else if (!e.endsWith(ALLOWED)) err.textContent = `Only ${ALLOWED}`;
-      else {
-        document.getElementById('contribLogin').style.display = 'none';
-        document.getElementById('uploadForm').style.display   = 'block';
-      }
-    };
-    document.getElementById('uploadBtn').onclick = async () => {
-      const lbl   = document.getElementById('labelInput').value.trim();
-      const vid   = document.getElementById('videoInput').files[0];
-      const stat  = document.getElementById('uploadStatus');
-      const email = document.getElementById('emailInput').value.trim().toLowerCase();
+    // — Section 3: Landmark capture & upload —
+    const startBtn    = document.getElementById('startCapture');
+    const stopBtn     = document.getElementById('stopCapture');
+    const uploadBtn   = document.getElementById('uploadCapture');
+    const statusP     = document.getElementById('captureStatus');
+    const labelInput  = document.getElementById('labelInput');
+    const uploadSt    = document.getElementById('uploadStatus');
+    const contribCanvas = document.getElementById('contribCanvas');
+    const ctxContrib    = contribCanvas.getContext('2d');
 
-      if (!lbl || !vid || !email.endsWith(ALLOWED)) {
-        return stat.textContent = 'Email, label & MP4 are all required.';
-      }
-      stat.textContent = 'Uploading…';
-      // Upload to Supabase Storage 'signs' bucket
-      const filename = `${Date.now()}_${vid.name}`;
-      const { error: upErr } = await supabase
-        .storage.from('signs').upload(filename, vid);
-      if (upErr) {
-        console.error(upErr);
-        return stat.textContent = 'Storage upload failed.';
-      }
-      // Insert into signLibrary table
-      const { error: dbErr } = await supabase
-        .from('signLibrary').insert([{ label: lbl, filename }]);
-      if (dbErr) {
-        console.error(dbErr);
-        return stat.textContent = 'Database insert failed.';
-      }
-      stat.textContent = 'Uploaded! Refreshing library…';
-      await loadLibrary();
-    };
-
-    // ── Load library from Supabase ──
-    async function loadLibrary() {
-      const { data, error } = await supabase
-        .from('signLibrary').select('label, filename')
-        .order('created_at',{ascending:false});
-      if (error) return console.error(error);
-      window.signLibrary = {};
-      data.forEach(item => {
-        const { publicUrl } = supabase
-          .storage.from('signs').getPublicUrl(item.filename);
-        window.signLibrary[item.label] = publicUrl;
+    let recording = false, captured = [];
+    // Setup a separate MediaPipe for capture
+    const handsCapture = new Hands({ locateFile: f=>
+      `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+    });
+    handsCapture.setOptions({
+      maxNumHands:2, modelComplexity:1,
+      minDetectionConfidence:0.7, minTrackingConfidence:0.7
+    });
+    handsCapture.onResults(results=>{
+      ctxContrib.drawImage(document.getElementById('signVideo'),0,0,400,300);
+      ctxContrib.strokeStyle='red'; ctxContrib.fillStyle='red'; ctxContrib.lineWidth=2;
+      const list = results.multiHandLandmarks||[];
+      list.forEach(lm => {
+        drawConnectors(ctxContrib, lm, HAND_CONNECTIONS, {color:'red'});
+        drawLandmarks(ctxContrib, lm, {color:'red'});
       });
-    }
+      if (recording) {
+        captured.push(list.map(hand=>hand.map(pt=>[pt.x,pt.y,pt.z])));
+        statusP.textContent = `Recording… frames: ${captured.length}`;
+      }
+    });
 
-    // ── Kick things off ──
+    // Share the same video feed
+    const captureVideo = document.getElementById('signVideo');
+    new Camera(captureVideo,{
+      onFrame: async ()=> await handsCapture.send({image:captureVideo}),
+      width:400, height:300
+    }).start();
+
+    startBtn.onclick = ()=>{
+      captured = [];
+      recording = true;
+      statusP.textContent = 'Recording…';
+      startBtn.disabled = true;
+      stopBtn.disabled  = false;
+      uploadBtn.disabled= true;
+      uploadSt.textContent= '';
+    };
+    stopBtn.onclick = ()=>{
+      recording = false;
+      statusP.textContent = `Captured ${captured.length} frames.`;
+      startBtn.disabled = false;
+      stopBtn.disabled  = true;
+      uploadBtn.disabled= false;
+    };
+    uploadBtn.onclick = async ()=>{
+      const label = labelInput.value.trim();
+      if (!label || captured.length===0) {
+        return uploadSt.textContent = 'Label & capture required.';
+      }
+      uploadSt.textContent = 'Uploading…';
+      const { error } = await supabase
+        .from('signLibrary')
+        .insert([{ label, landmarks: captured }]);
+      if (error) {
+        console.error(error);
+        return uploadSt.textContent = 'Upload failed.';
+      }
+      uploadSt.textContent = 'Uploaded! Thank you.';
+      uploadBtn.disabled = true;
+    };
+
+    // Kick off everything
     initTextToSign();
     initSignToText();
-    loadLibrary();
   })();
   </script>
 </body>
