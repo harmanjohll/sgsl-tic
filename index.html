@@ -5,68 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>SgSL Portal</title>
 
-  <!-- Three.js -->
+  <!-- Three.js core + GLTFLoader -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/loaders/GLTFLoader.js"></script>
+
   <!-- MediaPipe Hands -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
   <style>
-    body {
-      font-family: sans-serif;
-      text-align: center;
-      padding: 2rem;
-      margin: 0;
-    }
-    .section {
-      max-width: 450px;
-      margin: 2rem auto;
-      padding-top: 1rem;
-      border-top: 1px solid #ccc;
-    }
-    input, button {
-      font-size: 1rem;
-      padding: 0.5rem;
-    }
-    #error {
-      color: red;
-      margin-top: 0.5rem;
-    }
+    body { font-family: sans-serif; text-align: center; padding: 2rem; margin:0 }
+    .section { max-width: 480px; margin:2rem auto; padding-top:1rem; border-top:1px solid #ccc }
+    input, button { font-size:1rem; padding:0.5rem }
+    #error { color:red; margin-top:0.5rem }
 
-    /* Text→Sign */
-    #textToSign #avatarContainer {
-      width: 400px;
-      height: 300px;
-      margin: 1rem auto;
-      border: 1px solid #666;
-    }
+    /* Text→Sign avatar container */
+    #avatarContainer { width:400px; height:300px; margin:1rem auto; border:1px solid #666 }
 
-    /* Sign→Text */
-    #signToText {
-      position: relative;
-      width: 100%;
-      text-align: center;             /* <-- center children */
-      margin: 1rem auto;
-    }
-    #signCanvas {
-      border: 1px solid #666;
-      display: inline-block;          /* <-- center when combined with text-align */
-    }
-    #signVideo { display: none; }
+    /* Sign→Text overlay */
+    #signToText { position:relative; width:100%; text-align:center; }
+    #signCanvas { border:1px solid #666; display:inline-block }
+    #signVideo { display:none }
 
     /* Contribute */
-    #contribute > .subsection {
-      margin-top: 1rem;
-      text-align: left;
-    }
-    #contribute label,
-    #contribute input,
-    #contribute button {
-      display: block;
-      width: 100%;
-      box-sizing: border-box;
-      margin-bottom: 0.5rem;
+    #contribute .subsection { margin-top:1rem; text-align:left }
+    #contribute label, #contribute input, #contribute button {
+      display:block; width:100%; box-sizing:border-box; margin-bottom:0.5rem
     }
   </style>
 </head>
@@ -77,6 +42,17 @@
   <!-- 1. Text → Sign -->
   <section id="textToSign" class="section">
     <h2>1. Text → Sign</h2>
+
+    <!-- model selector -->
+    <label>
+      <input type="radio" name="model" value="male" checked/>
+      Male
+    </label>
+    <label>
+      <input type="radio" name="model" value="female"/>
+      Female
+    </label>
+
     <input type="text" id="wordInput" placeholder="Type a word…"/>
     <button id="showSignBtn">Show Sign</button>
     <p id="lookupResult"></p>
@@ -94,16 +70,12 @@
   <!-- 3. Contribute -->
   <section id="contribute" class="section">
     <h2>3. Contribute a Sign</h2>
-
-    <!-- login prompt -->
     <div id="contribLogin" class="subsection">
       <label for="emailInput">Enter your school email:</label>
       <input type="email" id="emailInput" placeholder="you@btyss.moe.edu.sg"/>
       <button id="loginBtn">Sign In</button>
       <p id="error"></p>
     </div>
-
-    <!-- upload form (hidden until login) -->
     <div id="uploadForm" class="subsection" style="display:none;">
       <label for="labelInput">Sign label (word/phrase):</label>
       <input type="text" id="labelInput" placeholder="e.g. hello"/>
@@ -116,118 +88,138 @@
 
   <script>
   (function(){
-    // — Text→Sign cube stub —
-    let scene, camera, renderer, cube;
-    function initTextToSign(){
-      const container = document.getElementById('avatarContainer');
-      scene    = new THREE.Scene();
-      camera   = new THREE.PerspectiveCamera(75, 400/300, 0.1, 1000);
-      renderer = new THREE.WebGLRenderer();
-      renderer.setSize(400,300);
-      container.appendChild(renderer.domElement);
+    //
+    // — Phase 2: Text→Sign with GLTFLoader —
+    //
+    const avatarContainer = document.getElementById('avatarContainer');
+    let scene, camera, renderer, currentModel;
 
-      cube = new THREE.Mesh(
-        new THREE.BoxGeometry(),
-        new THREE.MeshNormalMaterial()
-      );
-      scene.add(cube);
-      camera.position.z = 5;
-      (function animate(){
-        requestAnimationFrame(animate);
-        cube.rotation.x += 0.01;
-        cube.rotation.y += 0.01;
-        renderer.render(scene, camera);
-      })();
+    function initTextToSign(){
+      // three.js boilerplate
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(45, 400/300, 0.1, 1000);
+      renderer = new THREE.WebGLRenderer({antialias:true});
+      renderer.setSize(400, 300);
+      avatarContainer.innerHTML = '';
+      avatarContainer.appendChild(renderer.domElement);
+
+      // simple light
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(1,1,1);
+      scene.add(light);
+      scene.add(new THREE.AmbientLight(0x404040));
+
+      // position camera
+      camera.position.set(0,1.5,3);
+      camera.lookAt(0,1,0);
     }
-    document.getElementById('showSignBtn').onclick = () => {
-      const w = document.getElementById('wordInput').value.trim();
-      document.getElementById('lookupResult').textContent =
-        w ? `(Stub) Show sign for “${w}".` : 'Please type a word.';
+
+    async function loadModel(url){
+      if (currentModel) scene.remove(currentModel);
+      const loader = new THREE.GLTFLoader();
+      const gltf = await new Promise((res, rej) =>
+        loader.load(url, res, undefined, rej)
+      );
+      currentModel = gltf.scene;
+      // center & scale
+      currentModel.position.set(0,0,0);
+      currentModel.scale.set(1,1,1);
+      scene.add(currentModel);
+    }
+
+    function animateAvatar(){
+      requestAnimationFrame(animateAvatar);
+      renderer.render(scene, camera);
+    }
+
+    document.getElementById('showSignBtn').onclick = async () => {
+      const word = document.getElementById('wordInput').value.trim();
+      const result = document.getElementById('lookupResult');
+      if (!word) {
+        result.textContent = 'Please type a word.';
+        return;
+      }
+      result.textContent = `Showing pose for “${word}” (stub).`;
+
+      // pick model URL based on radio
+      const sel = document.querySelector('input[name="model"]:checked').value;
+      const url = sel === 'male'
+        ? 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/CesiumMan/glTF/CesiumMan.gltf'
+        : 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/Fox/glTF/Fox.gltf';
+
+      await loadModel(url);
+      // stub: later apply joint rotations for `word`
     };
 
-    // — Sign→Text overlay via MediaPipe Hands —
+    // init avatar
+    initTextToSign();
+    animateAvatar();
+
+
+    //
+    // — Phase 3: Sign→Text (unchanged from working version) —
+    //
     async function initSignToText(){
       const video = document.getElementById('signVideo');
       const canvas = document.getElementById('signCanvas');
       const resultP = document.getElementById('signResult');
       const ctx = canvas.getContext('2d');
 
-      // 1. Start webcam
       const stream = await navigator.mediaDevices.getUserMedia({video:true});
       video.srcObject = stream;
-      await new Promise(r => video.onloadedmetadata = r);
+      await new Promise(r=>video.onloadedmetadata=r);
 
-      // 2. Canvas matches video resolution
-      canvas.width  = video.videoWidth;
-      canvas.height = video.videoHeight;
+      canvas.width = video.videoWidth;
+      canvas.height= video.videoHeight;
 
-      // 3. Load MediaPipe
       resultP.textContent = 'Loading detector…';
       const hands = new Hands({
-        locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+        locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
       });
       hands.setOptions({
-        maxNumHands: 2,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.7,
-        minTrackingConfidence: 0.7
+        maxNumHands:2, modelComplexity:1,
+        minDetectionConfidence:0.7, minTrackingConfidence:0.7
       });
-      hands.onResults(drawHands);
-
-      // 4. Camera feed
-      new Camera(video, {
-        onFrame: async ()=> await hands.send({image:video}),
-        width: video.videoWidth, height: video.videoHeight
-      }).start();
-
-      function drawHands(results){
-        // draw video frame
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        ctx.lineWidth = 2; ctx.strokeStyle='red'; ctx.fillStyle='red';
-
-        const list = results.multiHandLandmarks || [];
+      hands.onResults(results=>{
+        ctx.drawImage(video,0,0,canvas.width,canvas.height);
+        ctx.lineWidth=2; ctx.strokeStyle='red'; ctx.fillStyle='red';
+        const list = results.multiHandLandmarks||[];
         resultP.textContent = list.length
           ? `Detected ${list.length} hand(s)`
           : 'No hands detected';
-
-        for (const lm of list){
+        for(const lm of list){
           drawConnectors(ctx, lm, HAND_CONNECTIONS, {color:'red'});
           drawLandmarks(ctx, lm, {color:'red'});
         }
-      }
+      });
+      new Camera(video,{
+        onFrame:async()=>await hands.send({image:video}),
+        width:video.videoWidth, height:video.videoHeight
+      }).start();
     }
-
-    // fire modules 1 & 2
-    initTextToSign();
     initSignToText();
 
-    // — Contribute gating logic —
-    const ALLOWED = '@btyss.moe.edu.sg';
-    const loginDiv = document.getElementById('contribLogin');
-    const formDiv  = document.getElementById('uploadForm');
-    const emailIn  = document.getElementById('emailInput');
-    const errorP   = document.getElementById('error');
-    const loginBtn = document.getElementById('loginBtn');
 
-    loginBtn.onclick = () => {
-      const e = emailIn.value.trim().toLowerCase();
-      errorP.textContent = '';
-      if (!e) {
-        errorP.textContent = 'Enter your email.';
-      } else if (!e.endsWith(ALLOWED)) {
-        errorP.textContent = `Only ${ALLOWED} allowed.`;
-      } else {
-        loginDiv.style.display = 'none';
-        formDiv.style.display  = 'block';
-      }
+    //
+    // — Phase 4: Contribute gating and stub upload —
+    //
+    const ALLOWED='@btyss.moe.edu.sg';
+    const loginDiv=document.getElementById('contribLogin');
+    const formDiv =document.getElementById('uploadForm');
+    const emailIn =document.getElementById('emailInput');
+    const errorP  =document.getElementById('error');
+    document.getElementById('loginBtn').onclick=()=>{
+      const e=emailIn.value.trim().toLowerCase();
+      errorP.textContent='';
+      if(!e) errorP.textContent='Enter your email.';
+      else if(!e.endsWith(ALLOWED)) errorP.textContent=`Only ${ALLOWED}`;
+      else { loginDiv.style.display='none'; formDiv.style.display='block'; }
     };
-
-    // stub upload
-    document.getElementById('uploadBtn').onclick = () => {
-      const lbl = document.getElementById('labelInput').value.trim();
-      const vid = document.getElementById('videoInput').files[0];
-      const status = document.getElementById('uploadStatus');
-      status.textContent = (lbl && vid) ? 'Uploaded! (stub)' : 'Provide label & MP4.';
+    document.getElementById('uploadBtn').onclick=()=>{
+      const lbl=document.getElementById('labelInput').value.trim();
+      const vid=document.getElementById('videoInput').files[0];
+      document.getElementById('uploadStatus').textContent = 
+        (lbl&&vid)? 'Uploaded! (stub)' : 'Provide label & MP4.';
     };
   })();
   </script>
