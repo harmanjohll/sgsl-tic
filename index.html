@@ -5,118 +5,133 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>SgSL Portal</title>
 
-  <!-- Three.js for Text→Sign -->
+  <!-- Three.js -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
-
-  <!-- MediaPipe Hands for Sign→Text -->
+  <!-- MediaPipe Hands -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
   <style>
-    body { font-family: sans-serif; text-align: center; padding: 2rem; }
-    #app { display: none; }
-    input, button { font-size: 1rem; padding: 0.5rem; }
-    #error { color: red; margin-top: 1rem; }
-    section { margin-top: 2rem; border-top: 1px solid #ccc; padding-top: 1rem; }
-
-    /* Text→Sign avatar container */
-    #avatarContainer {
-      width: 400px; height: 300px;
-      margin: 1rem auto; border: 1px solid #666;
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      padding: 2rem;
+      margin: 0;
+    }
+    .section {
+      max-width: 450px;
+      margin: 2rem auto;
+      padding-top: 1rem;
+      border-top: 1px solid #ccc;
+    }
+    input, button {
+      font-size: 1rem;
+      padding: 0.5rem;
+    }
+    #error {
+      color: red;
+      margin-top: 0.5rem;
     }
 
-    /* Sign→Text container: will size to video */
+    /* Text→Sign */
+    #textToSign #avatarContainer {
+      width: 400px;
+      height: 300px;
+      margin: 1rem auto;
+      border: 1px solid #666;
+    }
+
+    /* Sign→Text */
     #signToText {
       position: relative;
+      width: 400px;
       margin: 1rem auto;
     }
     #signCanvas {
       border: 1px solid #666;
-      display: block; margin: 0 auto;
+      display: block;
     }
-    /* Hide the raw video element completely */
+    /* hide raw video */
     #signVideo { display: none; }
+
+    /* Contribute (login + form) */
+    #contribute > .subsection {
+      margin-top: 1rem;
+      text-align: left;
+    }
+    #contribute label,
+    #contribute input,
+    #contribute button {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      margin-bottom: 0.5rem;
+    }
   </style>
 </head>
 <body>
 
-  <!-- LOGIN SCREEN -->
-  <div id="login">
-    <h1>Sign in with your school email</h1>
-    <input type="email" id="emailInput" placeholder="you@btyss.moe.edu.sg"/>
-    <button id="loginBtn">Sign In</button>
-    <p id="error"></p>
-  </div>
+  <h1>👋 Welcome to the SgSL Portal</h1>
 
-  <!-- MAIN APP -->
-  <div id="app">
-    <h1>👋 Welcome to the SgSL Portal</h1>
+  <!-- 1. Text → Sign -->
+  <section id="textToSign" class="section">
+    <h2>1. Text → Sign</h2>
+    <input type="text" id="wordInput" placeholder="Type a word…"/>
+    <button id="showSignBtn">Show Sign</button>
+    <p id="lookupResult"></p>
+    <div id="avatarContainer"></div>
+  </section>
 
-    <!-- 1. Text → Sign -->
-    <section id="textToSign">
-      <h2>1. Text → Sign</h2>
-      <input type="text" id="wordInput" placeholder="Type a word…"/>
-      <button id="showSignBtn">Show Sign</button>
-      <p id="lookupResult"></p>
-      <div id="avatarContainer"></div>
-    </section>
+  <!-- 2. Sign → Text -->
+  <section id="signToText" class="section">
+    <h2>2. Sign → Text</h2>
+    <p id="signResult">(initializing…)</p>
+    <video id="signVideo" autoplay playsinline></video>
+    <canvas id="signCanvas"></canvas>
+  </section>
 
-    <!-- 2. Sign → Text -->
-    <section id="signToText">
-      <h2>2. Sign → Text</h2>
-      <p id="signResult">(initializing…)</p>
-      <video id="signVideo" autoplay playsinline></video>
-      <canvas id="signCanvas"></canvas>
-    </section>
+  <!-- 3. Contribute (gated) -->
+  <section id="contribute" class="section">
+    <h2>3. Contribute a Sign</h2>
 
-    <!-- 3. Contribute -->
-    <section id="contribute">
-      <h2>3. Contribute a Sign</h2>
-      <p>(Upload form here.)</p>
-    </section>
-  </div>
+    <!-- login prompt -->
+    <div id="contribLogin" class="subsection">
+      <label for="emailInput">Enter your school email:</label>
+      <input type="email" id="emailInput" placeholder="you@btyss.moe.edu.sg"/>
+      <button id="loginBtn">Sign In</button>
+      <p id="error"></p>
+    </div>
+
+    <!-- upload form (hidden until login) -->
+    <div id="uploadForm" class="subsection" style="display:none;">
+      <label for="labelInput">Sign label (word/phrase):</label>
+      <input type="text" id="labelInput" placeholder="e.g. hello"/>
+      <label for="videoInput">Upload MP4 video:</label>
+      <input type="file" id="videoInput" accept="video/mp4"/>
+      <button id="uploadBtn">Upload Sign</button>
+      <p id="uploadStatus"></p>
+    </div>
+  </section>
 
   <script>
   (function(){
-    // — LOGIN —
-    const ALLOWED = '@btyss.moe.edu.sg';
-    const loginDiv = document.getElementById('login');
-    const appDiv   = document.getElementById('app');
-    const emailIn  = document.getElementById('emailInput');
-    const errorP   = document.getElementById('error');
-
-    document.getElementById('loginBtn').onclick = () => {
-      const email = emailIn.value.trim().toLowerCase();
-      errorP.textContent = '';
-      if (!email) {
-        errorP.textContent = 'Please enter your email.';
-      } else if (!email.endsWith(ALLOWED)) {
-        errorP.textContent = `Only ${ALLOWED} addresses allowed.`;
-      } else {
-        loginDiv.style.display = 'none';
-        appDiv.style.display   = 'block';
-        initTextToSign();
-        initSignToText();
-      }
-    };
-
-    // — Text → Sign stub (rotating cube) —
+    // — Text→Sign cube stub —
     let scene, camera, renderer, cube;
     function initTextToSign(){
       const container = document.getElementById('avatarContainer');
-      scene    = new THREE.Scene();
-      camera   = new THREE.PerspectiveCamera(75, container.clientWidth/container.clientHeight, 0.1, 1000);
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(75, 400/300, 0.1, 1000);
       renderer = new THREE.WebGLRenderer();
-      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setSize(400,300);
       container.appendChild(renderer.domElement);
 
-      const geometry = new THREE.BoxGeometry();
-      const material = new THREE.MeshNormalMaterial();
-      cube = new THREE.Mesh(geometry, material);
+      cube = new THREE.Mesh(
+        new THREE.BoxGeometry(),
+        new THREE.MeshNormalMaterial()
+      );
       scene.add(cube);
       camera.position.z = 5;
-
       (function animate(){
         requestAnimationFrame(animate);
         cube.rotation.x += 0.01;
@@ -124,31 +139,34 @@
         renderer.render(scene, camera);
       })();
     }
+    document.getElementById('showSignBtn').onclick = () => {
+      const w = document.getElementById('wordInput').value.trim();
+      document.getElementById('lookupResult').textContent =
+        w ? `(Stub) Show sign for “${w}”.` : 'Please type a word.';
+    };
 
-    // — Sign → Text with MediaPipe Hands (supports 2 hands) —
+    // — Sign→Text overlay via MediaPipe Hands —
     async function initSignToText(){
-      const video   = document.getElementById('signVideo');
-      const canvas  = document.getElementById('signCanvas');
+      const video = document.getElementById('signVideo');
+      const canvas = document.getElementById('signCanvas');
       const resultP = document.getElementById('signResult');
-      const ctx     = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d');
 
-      // 1. Start webcam
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      // start webcam
+      const stream = await navigator.mediaDevices.getUserMedia({video:true});
       video.srcObject = stream;
       await new Promise(r => video.onloadedmetadata = r);
 
-      // 2. Match canvas size to video’s actual resolution
-      canvas.width  = video.videoWidth;
+      // size canvas to video
+      canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      // Also constrain styling if you wish:
       canvas.style.width  = video.videoWidth + 'px';
       canvas.style.height = video.videoHeight + 'px';
 
-      // 3. Load MediaPipe Hands
+      // load MediaPipe
       resultP.textContent = 'Loading detector…';
       const hands = new Hands({
-        locateFile: (file) => 
-          `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
       });
       hands.setOptions({
         maxNumHands: 2,
@@ -156,44 +174,67 @@
         minDetectionConfidence: 0.7,
         minTrackingConfidence: 0.7
       });
-      hands.onResults(onHandsResults);
+      hands.onResults(drawHands);
 
-      // 4. Run camera frames into detector
-      const cameraFeed = new Camera(video, {
-        onFrame: async () => { await hands.send({ image: video }); },
-        width: video.videoWidth,
-        height: video.videoHeight
+      // camera feed
+      const cam = new Camera(video, {
+        onFrame: async ()=> await hands.send({image:video}),
+        width: video.videoWidth, height: video.videoHeight
       });
-      cameraFeed.start();
+      cam.start();
 
-      // 5. Draw results
-      function onHandsResults(results) {
-        // draw the video frame
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        ctx.lineWidth   = 2;
-        ctx.strokeStyle = 'red';
-        ctx.fillStyle   = 'red';
+      function drawHands(results){
+        // draw video
+        ctx.drawImage(video, 0,0,canvas.width,canvas.height);
+        ctx.lineWidth = 2; ctx.strokeStyle='red'; ctx.fillStyle='red';
 
-        const handsList = results.multiHandLandmarks || [];
-        if (handsList.length) {
-          resultP.textContent = `Detected ${handsList.length} hand(s)`;
-          for (const landmarks of handsList) {
-            // draw connections
-            drawConnectors(ctx, landmarks, HAND_CONNECTIONS, { color:'red', lineWidth:2 });
-            // draw landmarks
-            drawLandmarks(ctx, landmarks, { color:'red', lineWidth:1 });
-          }
-        } else {
-          resultP.textContent = 'No hands detected';
+        const list = results.multiHandLandmarks || [];
+        resultP.textContent = list.length
+          ? `Detected ${list.length} hand(s)`
+          : 'No hands detected';
+
+        for (const lm of list){
+          drawConnectors(ctx, lm, HAND_CONNECTIONS, {color:'red'});
+          drawLandmarks(ctx, lm, {color:'red'});
         }
       }
     }
 
-    // — Text→Sign lookup stub —
-    document.getElementById('showSignBtn').onclick = () => {
-      const word = document.getElementById('wordInput').value.trim();
-      document.getElementById('lookupResult').textContent =
-        word ? `(Stub) Would show sign for “${word}”.` : 'Please type a word first.';
+    // initialize modules 1 & 2 immediately
+    initTextToSign();
+    initSignToText();
+
+    // — Contribute gating logic —
+    const ALLOWED = '@btyss.moe.edu.sg';
+    const loginDiv = document.getElementById('contribLogin');
+    const formDiv  = document.getElementById('uploadForm');
+    const emailIn  = document.getElementById('emailInput');
+    const errorP   = document.getElementById('error');
+    const loginBtn = document.getElementById('loginBtn');
+
+    loginBtn.onclick = () => {
+      const e = emailIn.value.trim().toLowerCase();
+      errorP.textContent = '';
+      if (!e) {
+        errorP.textContent = 'Enter your email.';
+      } else if (!e.endsWith(ALLOWED)) {
+        errorP.textContent = `Only ${ALLOWED} allowed.`;
+      } else {
+        loginDiv.style.display = 'none';
+        formDiv.style.display  = 'block';
+      }
+    };
+
+    // stub upload handler
+    document.getElementById('uploadBtn').onclick = () => {
+      const lbl = document.getElementById('labelInput').value.trim();
+      const vid = document.getElementById('videoInput').files[0];
+      const status = document.getElementById('uploadStatus');
+      if (!lbl || !vid) {
+        status.textContent = 'Provide label & MP4.';
+      } else {
+        status.textContent = 'Uploaded! (stub)';
+      }
     };
   })();
   </script>
