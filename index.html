@@ -8,7 +8,7 @@
   <!-- Three.js for Text→Sign -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
 
-  <!-- TensorFlow.js & Handpose -->
+  <!-- TensorFlow.js & Handpose for Sign→Text -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.6.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose@0.0.7/dist/handpose.js"></script>
 
@@ -18,8 +18,23 @@
     input, button { font-size: 1rem; padding: 0.5rem; }
     #error { color: red; margin-top: 1rem; }
     section { margin-top: 2rem; border-top: 1px solid #ccc; padding-top: 1rem; }
-    #avatarContainer { width: 400px; height: 300px; margin: 1rem auto; border: 1px solid #666; }
-    #signToText video, #signToText canvas { display: block; margin: 0.5rem auto; }
+    /* Text→Sign avatar container */
+    #avatarContainer { 
+      width: 400px; height: 300px; margin: 1rem auto; 
+      border: 1px solid #666; 
+    }
+    /* Sign→Text overlay */
+    #signToText {
+      position: relative;
+      width: 400px; height: 300px;
+      margin: 1rem auto;
+    }
+    #signToText video { display: none; }
+    #signToText canvas {
+      border: 1px solid #666;
+      display: block; margin: 0 auto;
+      width: 400px; height: 300px;
+    }
   </style>
 </head>
 <body>
@@ -49,7 +64,8 @@
     <section id="signToText">
       <h2>2. Sign → Text</h2>
       <p id="signResult">(initializing…)</p>
-      <!-- video & canvas will be injected here -->
+      <video id="signVideo" autoplay playsinline></video>
+      <canvas id="signCanvas"></canvas>
     </section>
 
     <!-- 3. Contribute -->
@@ -69,17 +85,17 @@
     const errorP   = document.getElementById('error');
 
     document.getElementById('loginBtn').onclick = () => {
-      const e = emailIn.value.trim().toLowerCase();
+      const email = emailIn.value.trim().toLowerCase();
       errorP.textContent = '';
-      if (!e) {
+      if (!email) {
         errorP.textContent = 'Please enter your email.';
-      } else if (!e.endsWith(ALLOWED)) {
+      } else if (!email.endsWith(ALLOWED)) {
         errorP.textContent = `Only ${ALLOWED} addresses allowed.`;
       } else {
         loginDiv.style.display = 'none';
         appDiv.style.display   = 'block';
         initTextToSign();
-        initSignToText();  // now using handpose
+        initSignToText();
       }
     };
 
@@ -107,20 +123,12 @@
       })();
     }
 
-    // — Sign → Text with TensorFlow.js Handpose —
+    // — Sign → Text with overlay canvas —
     async function initSignToText(){
-      const section = document.getElementById('signToText');
-      const video   = document.createElement('video');
-      video.width   = 400; video.height = 300;
-      video.autoplay = true; video.playsInline = true;
-      section.appendChild(video);
-
-      const canvas = document.createElement('canvas');
-      canvas.width  = 400; canvas.height = 300;
-      section.appendChild(canvas);
-
+      const video   = document.getElementById('signVideo');
+      const canvas  = document.getElementById('signCanvas');
       const resultP = document.getElementById('signResult');
-      const ctx = canvas.getContext('2d');
+      const ctx     = canvas.getContext('2d');
 
       // 1. Start webcam
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -132,18 +140,42 @@
       const model = await handpose.load();
       resultP.textContent = 'Model loaded. Raise your hand.';
 
-      // 3. Detection loop
-      async function detect() {
+      // 3. Skeleton connections
+      const skeleton = [
+        [0,1],[1,2],[2,3],[3,4],
+        [0,5],[5,6],[6,7],[7,8],
+        [0,9],[9,10],[10,11],[11,12],
+        [0,13],[13,14],[14,15],[15,16],
+        [0,17],[17,18],[18,19],[19,20]
+      ];
+
+      // 4. Detection loop
+      async function detect(){
+        // draw video frame first
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
         const predictions = await model.estimateHands(video, true);
-        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'red';
+        ctx.fillStyle   = 'red';
 
         if (predictions.length) {
           resultP.textContent = `Detected ${predictions.length} hand(s)`;
-          // Draw red dots
-          ctx.fillStyle = 'red';
-          predictions[0].landmarks.forEach(([x, y, z]) => {
+          const landmarks = predictions[0].landmarks;
+
+          // draw skeleton lines
+          for (const [i, j] of skeleton) {
+            const [x1, y1] = landmarks[i];
+            const [x2, y2] = landmarks[j];
             ctx.beginPath();
-            ctx.arc(x, y, 5, 0, 2*Math.PI);
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+          }
+          // draw landmark dots
+          landmarks.forEach(([x, y]) => {
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, 2 * Math.PI);
             ctx.fill();
           });
         } else {
@@ -154,11 +186,11 @@
       detect();
     }
 
-    // — Lookup stub —
+    // — Text→Sign lookup stub —
     document.getElementById('showSignBtn').onclick = () => {
-      const w = document.getElementById('wordInput').value.trim();
+      const word = document.getElementById('wordInput').value.trim();
       document.getElementById('lookupResult').textContent =
-        w ? `(Stub) Would show sign for “${w}”.` : 'Please type a word first.';
+        word ? `(Stub) Would show sign for “${word}”.` : 'Please type a word first.';
     };
   })();
   </script>
