@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SgSL Portal</title>
+
+  <!-- Three.js for Text→Sign -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+  
+  <!-- MediaPipe Hands for Sign→Text -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 2rem; }
+    #app { display: none; }
+    input, button { font-size: 1rem; padding: 0.5rem; }
+    #error { color: red; margin-top: 1rem; }
+    section { margin-top: 2rem; border-top: 1px solid #ccc; padding-top: 1rem; }
+    #avatarContainer { width: 400px; height: 300px; margin: 1rem auto; border: 1px solid #666; }
+    #signToText video, #signToText canvas { display: block; margin: 0.5rem auto; }
+  </style>
+</head>
+<body>
+
+  <!-- LOGIN SCREEN -->
+  <div id="login">
+    <h1>Sign in with your school email</h1>
+    <input type="email" id="emailInput" placeholder="you@btyss.moe.edu.sg"/>
+    <button id="loginBtn">Sign In</button>
+    <p id="error"></p>
+  </div>
+
+  <!-- MAIN APP -->
+  <div id="app">
+    <h1>👋 Welcome to the SgSL Portal</h1>
+
+    <!-- 1. Text → Sign -->
+    <section id="textToSign">
+      <h2>1. Text → Sign</h2>
+      <input type="text" id="wordInput" placeholder="Type a word…"/>
+      <button id="showSignBtn">Show Sign</button>
+      <p id="lookupResult"></p>
+      <div id="avatarContainer"></div>
+    </section>
+
+    <!-- 2. Sign → Text -->
+    <section id="signToText">
+      <h2>2. Sign → Text</h2>
+      <p id="signResult">(initializing…)</p>
+      <!-- video & canvas injected here -->
+    </section>
+
+    <!-- 3. Contribute -->
+    <section id="contribute">
+      <h2>3. Contribute a Sign</h2>
+      <p>(Upload form here.)</p>
+    </section>
+  </div>
+
+  <script>
+  (function(){
+    // --- LOGIN logic ---
+    const ALLOWED = '@btyss.moe.edu.sg';
+    const loginDiv = document.getElementById('login');
+    const appDiv   = document.getElementById('app');
+    const emailIn  = document.getElementById('emailInput');
+    const errorP   = document.getElementById('error');
+
+    document.getElementById('loginBtn').onclick = ()=> {
+      const e = emailIn.value.trim().toLowerCase();
+      errorP.textContent = '';
+      if (!e) {
+        errorP.textContent = 'Please enter your email.';
+      } else if (!e.endsWith(ALLOWED)) {
+        errorP.textContent = `Only ${ALLOWED} addresses allowed.`;
+      } else {
+        loginDiv.style.display = 'none';
+        appDiv.style.display   = 'block';
+        initTextToSign();
+        initSignToText();
+      }
+    };
+
+    // --- Text → Sign stub (rotating cube) ---
+    let scene, camera, renderer, cube;
+    function initTextToSign(){
+      const container = document.getElementById('avatarContainer');
+      scene    = new THREE.Scene();
+      camera   = new THREE.PerspectiveCamera(75, container.clientWidth/container.clientHeight, 0.1, 1000);
+      renderer = new THREE.WebGLRenderer();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      container.appendChild(renderer.domElement);
+
+      const geometry = new THREE.BoxGeometry();
+      const material = new THREE.MeshNormalMaterial();
+      cube = new THREE.Mesh(geometry, material);
+      scene.add(cube);
+      camera.position.z = 5;
+
+      (function animate(){
+        requestAnimationFrame(animate);
+        cube.rotation.x += 0.01;
+        cube.rotation.y += 0.01;
+        renderer.render(scene, camera);
+      })();
+    }
+
+    // --- Sign → Text with manual landmark drawing ---
+    function initSignToText(){
+      const section = document.getElementById('signToText');
+      const video   = document.createElement('video');
+      video.width   = 400; video.height = 300;
+      video.autoplay = true; video.playsInline = true;
+      section.appendChild(video);
+
+      const canvas = document.createElement('canvas');
+      canvas.width  = 400; canvas.height = 300;
+      section.appendChild(canvas);
+
+      const resultP = document.getElementById('signResult');
+
+      // Setup MediaPipe Hands
+      const hands = new Hands({
+        locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+      hands.setOptions({
+        maxNumHands: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7
+      });
+      hands.onResults(results => {
+        // Log for debugging
+        console.log('MediaPipe onResults:', results);
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length) {
+          resultP.textContent = `Detected ${results.multiHandLandmarks.length} hand(s)`;
+          // Draw each landmark as a red circle
+          ctx.fillStyle = 'red';
+          for (const landmarks of results.multiHandLandmarks) {
+            landmarks.forEach(lm => {
+              const x = lm.x * canvas.width;
+              const y = lm.y * canvas.height;
+              ctx.beginPath();
+              ctx.arc(x, y, 5, 0, 2 * Math.PI);
+              ctx.fill();
+            });
+          }
+        } else {
+          resultP.textContent = 'No hands detected';
+        }
+      });
+
+      // Start camera feed
+      const cameraFeed = new Camera(video, {
+        onFrame: async () => await hands.send({ image: video }),
+        width: 400, height: 300
+      });
+      cameraFeed.start();
+    }
+
+    // --- Simple Text→Sign lookup stub ---
+    document.getElementById('showSignBtn').onclick = () => {
+      const word = document.getElementById('wordInput').value.trim();
+      const result = document.getElementById('lookupResult');
+      if (!word) {
+        result.textContent = 'Please type a word first.';
+      } else {
+        result.textContent = `(Stub) Would show sign for “${word}” here.`;
+      }
+    };
+  })();
+  </script>
+</body>
+</html>
