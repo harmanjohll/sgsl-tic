@@ -3,11 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Avatar Loader Debug</title>
-
-  <!-- Three.js core (you can ignore the deprecation warning) -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
-
+  <title>Avatar Loader Debug (Module)</title>
   <style>
     body { font-family:sans-serif; text-align:center; padding:2rem; margin:0 }
     .section { max-width:480px; margin:2rem auto; padding:1rem; border:1px solid #ccc; background:#fafafa }
@@ -17,41 +13,47 @@
   </style>
 </head>
 <body>
-
-  <h1>🔧 Avatar Loader Debug</h1>
+  <h1>🔧 Avatar Loader Debug (Module)</h1>
   <section class="section">
     <h2>Load a 3D Avatar</h2>
-    <button id="testAvatarBtn">Load Male Avatar</button>
-    <button id="testAvatarFemaleBtn">Load Female Avatar</button>
+    <button id="loadMale">Load Male Avatar</button>
+    <button id="loadFemale">Load Female Avatar</button>
     <p id="debugAvatar">(no test yet)</p>
     <div id="avatarContainer"></div>
   </section>
 
-  <script>
-  (function(){
+  <!-- Module script that imports Three and GLTFLoader -->
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js';
+    import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
+
     let scene, camera, renderer, model;
 
-    function initCanvas(){
+    function initCanvas() {
       if (scene) return;
-      const c = document.getElementById('avatarContainer');
+      const container = document.getElementById('avatarContainer');
       scene    = new THREE.Scene();
       scene.background = new THREE.Color(0xf0f0f0);
-      camera   = new THREE.PerspectiveCamera(45,400/300,0.1,1000);
-      renderer = new THREE.WebGLRenderer({antialias:true});
-      renderer.setSize(400,300);
-      c.innerHTML = '';
-      c.appendChild(renderer.domElement);
-      const light = new THREE.DirectionalLight(0xffffff,1);
-      light.position.set(1,1,1);
+      camera   = new THREE.PerspectiveCamera(45, 400/300, 0.1, 1000);
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(400, 300);
+      container.innerHTML = '';
+      container.appendChild(renderer.domElement);
+
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(1, 1, 1);
       scene.add(light);
       scene.add(new THREE.AmbientLight(0x404040));
-      camera.position.set(0,1.5,3);
-      camera.lookAt(0,1,0);
-      (function renderLoop(){
-        requestAnimationFrame(renderLoop);
+
+      camera.position.set(0, 1.5, 3);
+      camera.lookAt(0, 1, 0);
+
+      function animate() {
+        requestAnimationFrame(animate);
         if (model) model.rotation.y += 0.01;
         renderer.render(scene, camera);
-      })();
+      }
+      animate();
     }
 
     async function loadAvatar(sex) {
@@ -61,21 +63,16 @@
         initCanvas();
         if (model) scene.remove(model);
 
-        const url = sex==='male'
+        const url = sex === 'male'
           ? 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/CesiumMan/glTF/CesiumMan.gltf'
           : 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/Fox/glTF/Fox.gltf';
-
-        // Dynamically import the ES module version of GLTFLoader
-        const { GLTFLoader } = await import(
-          'https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js'
-        );
 
         const loader = new GLTFLoader();
         const gltf = await new Promise((res, rej) =>
           loader.load(url, res, undefined, rej)
         );
         model = gltf.scene;
-        model.scale.set(1,1,1);
+        model.scale.set(1, 1, 1);
         scene.add(model);
         out.textContent = `Loaded ${sex} avatar successfully!`;
       } catch (err) {
@@ -84,9 +81,8 @@
       }
     }
 
-    document.getElementById('testAvatarBtn').onclick = ()=> loadAvatar('male');
-    document.getElementById('testAvatarFemaleBtn').onclick = ()=> loadAvatar('female');
-  })();
+    document.getElementById('loadMale').onclick   = () => loadAvatar('male');
+    document.getElementById('loadFemale').onclick = () => loadAvatar('female');
   </script>
 </body>
 </html>
