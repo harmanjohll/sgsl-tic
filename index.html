@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Avatar Loader Debug (Module)</title>
+  <title>Avatar Loader Debug (Dynamic Import)</title>
   <style>
     body { font-family:sans-serif; text-align:center; padding:2rem; margin:0 }
     .section { max-width:480px; margin:2rem auto; padding:1rem; border:1px solid #ccc; background:#fafafa }
@@ -13,7 +13,8 @@
   </style>
 </head>
 <body>
-  <h1>🔧 Avatar Loader Debug (Module)</h1>
+
+  <h1>🔧 Avatar Loader Debug</h1>
   <section class="section">
     <h2>Load a 3D Avatar</h2>
     <button id="loadMale">Load Male Avatar</button>
@@ -22,14 +23,15 @@
     <div id="avatarContainer"></div>
   </section>
 
-  <!-- Module script that imports Three and GLTFLoader -->
-  <script type="module">
-    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js';
-    import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
-
+  <script>
+  (function(){
     let scene, camera, renderer, model;
 
-    function initCanvas() {
+    function log(msg) {
+      document.getElementById('debugAvatar').textContent = msg;
+    }
+
+    function initCanvas(THREE) {
       if (scene) return;
       const container = document.getElementById('avatarContainer');
       scene    = new THREE.Scene();
@@ -40,30 +42,32 @@
       container.innerHTML = '';
       container.appendChild(renderer.domElement);
 
-      const light = new THREE.DirectionalLight(0xffffff, 1);
-      light.position.set(1, 1, 1);
+      const light = new THREE.DirectionalLight(0xffffff,1);
+      light.position.set(1,1,1);
       scene.add(light);
       scene.add(new THREE.AmbientLight(0x404040));
 
-      camera.position.set(0, 1.5, 3);
-      camera.lookAt(0, 1, 0);
+      camera.position.set(0,1.5,3);
+      camera.lookAt(0,1,0);
 
-      function animate() {
+      (function animate(){
         requestAnimationFrame(animate);
         if (model) model.rotation.y += 0.01;
-        renderer.render(scene, camera);
-      }
-      animate();
+        renderer.render(scene,camera);
+      })();
     }
 
     async function loadAvatar(sex) {
-      const out = document.getElementById('debugAvatar');
-      out.textContent = `Loading ${sex} avatar…`;
+      log(`Starting ${sex} avatar load…`);
       try {
-        initCanvas();
+        // Dynamically import Three.js and GLTFLoader as ES modules
+        const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js');
+        const { GLTFLoader } = await import('https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js');
+
+        initCanvas(THREE);
         if (model) scene.remove(model);
 
-        const url = sex === 'male'
+        const url = sex==='male'
           ? 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/CesiumMan/glTF/CesiumMan.gltf'
           : 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/Fox/glTF/Fox.gltf';
 
@@ -72,17 +76,18 @@
           loader.load(url, res, undefined, rej)
         );
         model = gltf.scene;
-        model.scale.set(1, 1, 1);
+        model.scale.set(1,1,1);
         scene.add(model);
-        out.textContent = `Loaded ${sex} avatar successfully!`;
+        log(`Loaded ${sex} avatar successfully!`);
       } catch (err) {
         console.error('Avatar load failed', err);
-        out.textContent = 'Error loading avatar: ' + err.message;
+        log('Error loading avatar: ' + err.message);
       }
     }
 
-    document.getElementById('loadMale').onclick   = () => loadAvatar('male');
-    document.getElementById('loadFemale').onclick = () => loadAvatar('female');
+    document.getElementById('loadMale').onclick   = ()=> loadAvatar('male');
+    document.getElementById('loadFemale').onclick = ()=> loadAvatar('female');
+  })();
   </script>
 </body>
 </html>
