@@ -3,76 +3,37 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>SgSL Portal ‒ Debug</title>
+  <title>SgSL Portal ‒ Avatar Debug</title>
 
-  <!-- Supabase client -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script>
-    const SUPABASE_URL      = 'https://lywyeuotzluabeehbdgt.supabase.co';
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5d3lldW90emx1YWJlZWhiZGd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAzMDk1OTMsImV4cCI6MjA2NTg4NTU5M30.Iwqd626SUywCXNJK3GGzwOp2D0ORfmO_CEqDtMCTnPg';
-    // Expose under a safe name
-    window.supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  </script>
-
-  <!-- Three.js core + GLTFLoader (non-module) -->
+  <!-- 1. Three.js core -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+  <!-- 2. Non-module GLTFLoader registers THREE.GLTFLoader -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/loaders/GLTFLoader.js"></script>
-
-  <!-- MediaPipe Hands -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
   <style>
     body { font-family:sans-serif; text-align:center; padding:2rem; margin:0 }
-    .section { max-width:480px; margin:2rem auto; padding:1rem; border:1px solid #ccc; background:#fafafa; }
-    button { font-size:1rem; padding:.5rem 1rem; margin:.5rem; }
-    p { margin:.5rem 0; color:#333; }
-    #debugAvatar, #debugSupabase { color: red; min-height:1.2em; }
-    #avatarContainer { width:400px; height:300px; margin:1rem auto; border:1px solid #666; background:#f0f0f0; }
+    .section { max-width:480px; margin:2rem auto; padding:1rem; border:1px solid #ccc; background:#fafafa }
+    button { font-size:1rem; padding:.5rem 1rem; margin:.5rem }
+    p { margin:.5rem 0; color:#333 }
+    #debugAvatar { color: red; min-height:1.2em }
+    #avatarContainer { width:400px; height:300px; margin:1rem auto; border:1px solid #666; background:#f0f0f0 }
   </style>
 </head>
 <body>
 
-  <h1>🔧 Debug Panel</h1>
+  <h1>🔧 Avatar Loader Debug</h1>
   <section class="section">
-    <h2>1. Test Supabase Connection</h2>
-    <button id="testSupabaseBtn">Test Supabase</button>
-    <p id="debugSupabase">(no test yet)</p>
-  </section>
-
-  <section class="section">
-    <h2>2. Test Avatar Loader</h2>
-    <button id="testAvatarBtn">Test Avatar Load (Male)</button>
-    <button id="testAvatarFemaleBtn">Test Avatar Load (Female)</button>
+    <h2>Load a 3D Avatar</h2>
+    <button id="testAvatarBtn">Load Male Avatar</button>
+    <button id="testAvatarFemaleBtn">Load Female Avatar</button>
     <p id="debugAvatar">(no test yet)</p>
     <div id="avatarContainer"></div>
   </section>
 
   <script>
   (function(){
-    // 1) Supabase test
-    document.getElementById('testSupabaseBtn').onclick = async () => {
-      const out = document.getElementById('debugSupabase');
-      out.textContent = 'Testing…';
-      try {
-        // Attempt to fetch one row
-        const { data, error } = await window.supabaseClient
-          .from('signLibrary')
-          .select('label')
-          .limit(1);
-        if (error) throw error;
-        out.textContent = data.length
-          ? `Success! Fetched label: "${data[0].label}".`
-          : 'Success! Table is empty.';
-      } catch (err) {
-        console.error('Supabase test error', err);
-        out.textContent = 'Error: ' + err.message;
-      }
-    };
-
-    // 2) Avatar test
     let avatarScene, avatarCamera, avatarRenderer, avatarModel;
+
     function initAvatarCanvas() {
       if (avatarScene) return;
       const container = document.getElementById('avatarContainer');
@@ -101,26 +62,30 @@
       out.textContent = `Loading ${sex} avatar…`;
       try {
         initAvatarCanvas();
+        if (!THREE.GLTFLoader) throw new Error('GLTFLoader not loaded');
         if (avatarModel) avatarScene.remove(avatarModel);
+
         const url = sex==='male'
           ? 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/CesiumMan/glTF/CesiumMan.gltf'
           : 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/Fox/glTF/Fox.gltf';
+
         const loader = new THREE.GLTFLoader();
         const gltf = await new Promise((res, rej) =>
           loader.load(url, res, undefined, rej)
         );
+
         avatarModel = gltf.scene;
         avatarModel.scale.set(1,1,1);
         avatarScene.add(avatarModel);
         out.textContent = `Loaded ${sex} avatar successfully!`;
       } catch (err) {
         console.error('Avatar load failed', err);
-        out.textContent = 'Error loading avatar: ' + err.message;
+        out.textContent = 'Error: ' + err.message;
       }
     }
 
-    document.getElementById('testAvatarBtn').onclick = ()=> loadAvatar('male');
-    document.getElementById('testAvatarFemaleBtn').onclick = ()=> loadAvatar('female');
+    document.getElementById('testAvatarBtn').onclick = () => loadAvatar('male');
+    document.getElementById('testAvatarFemaleBtn').onclick = () => loadAvatar('female');
   })();
   </script>
 </body>
