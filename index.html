@@ -3,271 +3,124 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>SgSL Portal</title>
+  <title>SgSL Portal ‒ Debug</title>
 
-  <!-- 1. Supabase client -->
+  <!-- Supabase client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    // Must come *after* supabase-js is loaded
     const SUPABASE_URL      = 'https://lywyeuotzluabeehbdgt.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.…';
-    // Use a different var name so we don't shadow the global
-    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    // Expose under a safe name
+    window.supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   </script>
 
-  <!-- 2. Three.js + GLTFLoader (non-module) -->
+  <!-- Three.js core + GLTFLoader (non-module) -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/loaders/GLTFLoader.js"></script>
 
-  <!-- 3. MediaPipe Hands -->
+  <!-- MediaPipe Hands -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
   <style>
-    body { font-family: sans-serif; text-align: center; padding: 2rem; margin: 0; }
-    .menu { margin-bottom: 2rem; }
-    .menu button { margin: 0 .5rem; padding: .75rem 1.5rem; }
-    .section { display: none; max-width: 480px; margin: 0 auto; padding-top: 1rem; border-top: 1px solid #ccc; }
-    input, button { font-size: 1rem; padding: .5rem; margin: .25rem; }
-    #avatarContainer, #signCanvas, #contribCanvas { border: 1px solid #666; margin: 1rem auto; background: #f0f0f0; }
-    #signVideo { display: none; }
-    #error, #captureStatus, #uploadStatus, #libDebug { color: red; margin-top: .5rem; }
+    body { font-family:sans-serif; text-align:center; padding:2rem; margin:0 }
+    .section { max-width:480px; margin:2rem auto; padding:1rem; border:1px solid #ccc; background:#fafafa; }
+    button { font-size:1rem; padding:.5rem 1rem; margin:.5rem; }
+    p { margin:.5rem 0; color:#333; }
+    #debugAvatar, #debugSupabase { color: red; min-height:1.2em; }
+    #avatarContainer { width:400px; height:300px; margin:1rem auto; border:1px solid #666; background:#f0f0f0; }
   </style>
 </head>
 <body>
-  <h1>👋 SgSL Portal</h1>
-  <div class="menu">
-    <button id="btn1">Text → Sign</button>
-    <button id="btn2">Sign → Text</button>
-    <button id="btn3">Contribute</button>
-  </div>
 
-  <!-- Section 1 -->
-  <section id="section1" class="section">
-    <h2>Text → Sign</h2>
-    <label><input type="radio" name="model" value="male" checked/> Male</label>
-    <label><input type="radio" name="model" value="female"/> Female</label><br/>
-    <input type="text" id="wordInput" placeholder="Type a word…"/>
-    <button id="showSignBtn">Show Sign</button>
-    <p id="lookupResult"></p>
+  <h1>🔧 Debug Panel</h1>
+  <section class="section">
+    <h2>1. Test Supabase Connection</h2>
+    <button id="testSupabaseBtn">Test Supabase</button>
+    <p id="debugSupabase">(no test yet)</p>
+  </section>
+
+  <section class="section">
+    <h2>2. Test Avatar Loader</h2>
+    <button id="testAvatarBtn">Test Avatar Load (Male)</button>
+    <button id="testAvatarFemaleBtn">Test Avatar Load (Female)</button>
+    <p id="debugAvatar">(no test yet)</p>
     <div id="avatarContainer"></div>
-    <p id="libDebug"></p>
-  </section>
-
-  <!-- Section 2 -->
-  <section id="section2" class="section">
-    <h2>Sign → Text</h2>
-    <p id="signResult">(initializing…)</p>
-    <video id="signVideo" autoplay playsinline></video>
-    <canvas id="signCanvas"></canvas>
-  </section>
-
-  <!-- Section 3 -->
-  <section id="section3" class="section">
-    <h2>Contribute a Sign</h2>
-    <div id="authDiv">
-      <label for="emailInput">Enter school email:</label><br/>
-      <input type="email" id="emailInput" placeholder="you@btyss.moe.edu.sg"/><br/>
-      <button id="loginBtn">Sign In</button>
-      <p id="error"></p>
-    </div>
-    <div id="capDiv" style="display:none;">
-      <input type="text" id="labelInput" placeholder="Enter sign label…"/><br/>
-      <button id="startCapture">Start Capture</button>
-      <button id="stopCapture" disabled>Stop Capture</button>
-      <p id="captureStatus">(idle)</p>
-      <canvas id="contribCanvas" width="400" height="300"></canvas><br/>
-      <button id="uploadCapture" disabled>Upload Captured Sign</button>
-      <p id="uploadStatus"></p>
-    </div>
   </section>
 
   <script>
   (function(){
-    // Menu routing
-    const s1 = document.getElementById('section1'),
-          s2 = document.getElementById('section2'),
-          s3 = document.getElementById('section3');
-    document.getElementById('btn1').onclick = ()=>{
-      show(s1); initTextToSign(); loadLibrary();
+    // 1) Supabase test
+    document.getElementById('testSupabaseBtn').onclick = async () => {
+      const out = document.getElementById('debugSupabase');
+      out.textContent = 'Testing…';
+      try {
+        // Attempt to fetch one row
+        const { data, error } = await window.supabaseClient
+          .from('signLibrary')
+          .select('label')
+          .limit(1);
+        if (error) throw error;
+        out.textContent = data.length
+          ? `Success! Fetched label: "${data[0].label}".`
+          : 'Success! Table is empty.';
+      } catch (err) {
+        console.error('Supabase test error', err);
+        out.textContent = 'Error: ' + err.message;
+      }
     };
-    document.getElementById('btn2').onclick = ()=>{ show(s2); initSignToText(); };
-    document.getElementById('btn3').onclick = ()=>{ show(s3); };
-    function show(sec){
-      [s1,s2,s3].forEach(x=>x.style.display='none');
-      sec.style.display='block';
-    }
-    show(s1);
 
-    // SECTION 1: Text→Sign
-    let scene, camera, renderer, currentModel;
-    function initTextToSign(){
-      if (scene) return;
-      const c = document.getElementById('avatarContainer');
-      scene = new THREE.Scene();
-      scene.background = new THREE.Color(0xf0f0f0);
-      camera = new THREE.PerspectiveCamera(45,400/300,0.1,1000);
-      renderer = new THREE.WebGLRenderer({antialias:true});
-      renderer.setSize(400,300);
-      c.innerHTML=''; c.appendChild(renderer.domElement);
-      scene.add(new THREE.DirectionalLight(0xffffff,1));
-      scene.add(new THREE.AmbientLight(0x404040));
-      camera.position.set(0,1.5,3); camera.lookAt(0,1,0);
+    // 2) Avatar test
+    let avatarScene, avatarCamera, avatarRenderer, avatarModel;
+    function initAvatarCanvas() {
+      if (avatarScene) return;
+      const container = document.getElementById('avatarContainer');
+      avatarScene    = new THREE.Scene();
+      avatarScene.background = new THREE.Color(0xf0f0f0);
+      avatarCamera   = new THREE.PerspectiveCamera(45,400/300,0.1,1000);
+      avatarRenderer = new THREE.WebGLRenderer({antialias:true});
+      avatarRenderer.setSize(400,300);
+      container.innerHTML = '';
+      container.appendChild(avatarRenderer.domElement);
+      const light = new THREE.DirectionalLight(0xffffff,1);
+      light.position.set(1,1,1);
+      avatarScene.add(light);
+      avatarScene.add(new THREE.AmbientLight(0x404040));
+      avatarCamera.position.set(0,1.5,3);
+      avatarCamera.lookAt(0,1,0);
       (function animate(){
         requestAnimationFrame(animate);
-        if (currentModel) currentModel.rotation.y+=0.005;
-        renderer.render(scene,camera);
+        if (avatarModel) avatarModel.rotation.y += 0.01;
+        avatarRenderer.render(avatarScene, avatarCamera);
       })();
-      loadAvatarModel();
     }
-    async function loadAvatarModel(){
-      const sel = document.querySelector('input[name="model"]:checked').value;
-      const url = sel==='male'
-        ? 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/CesiumMan/glTF/CesiumMan.gltf'
-        : 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/Fox/glTF/Fox.gltf';
-      if (currentModel) scene.remove(currentModel);
+
+    async function loadAvatar(sex) {
+      const out = document.getElementById('debugAvatar');
+      out.textContent = `Loading ${sex} avatar…`;
       try {
+        initAvatarCanvas();
+        if (avatarModel) avatarScene.remove(avatarModel);
+        const url = sex==='male'
+          ? 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/CesiumMan/glTF/CesiumMan.gltf'
+          : 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/Fox/glTF/Fox.gltf';
         const loader = new THREE.GLTFLoader();
-        const gltf = await new Promise((res,rej)=>
-          loader.load(url,res,undefined,rej)
+        const gltf = await new Promise((res, rej) =>
+          loader.load(url, res, undefined, rej)
         );
-        currentModel = gltf.scene;
-        currentModel.scale.set(1,1,1);
-        scene.add(currentModel);
-      } catch(e) {
-        console.error('Avatar load failed', e);
-      }
-    }
-    document.getElementById('showSignBtn').onclick = async ()=>{
-      initTextToSign();
-      const w = document.getElementById('wordInput').value.trim();
-      const out = document.getElementById('lookupResult');
-      if (!w) return out.textContent='Please type a word.';
-      out.textContent=`Looking up “${w}”…`;
-      await loadLibrary();
-      await loadAvatarModel();
-      out.textContent = window.signLibrary[w]
-        ? `Showing contributed sign for “${w}”.`
-        : `No contributed sign for “${w}”; default avatar shown.`;
-    };
-    document.querySelectorAll('input[name="model"]').forEach(r=>{
-      r.onchange = ()=>{ if(scene) loadAvatarModel(); };
-    });
-
-    // SECTION 1: Load library
-    async function loadLibrary(){
-      try {
-        const { data, error } = await supabaseClient
-          .from('signLibrary').select('label,filename,landmarks');
-        if (error) throw error;
-        window.signLibrary = {};
-        data.forEach(item => window.signLibrary[item.label] = item);
-        console.log('Library:', window.signLibrary);
-        document.getElementById('libDebug').textContent = `Library: ${data.length} items`;
-      } catch(err) {
-        console.error('Library fetch error', err);
-        document.getElementById('libDebug').textContent = 'Library fetch error; see console.';
+        avatarModel = gltf.scene;
+        avatarModel.scale.set(1,1,1);
+        avatarScene.add(avatarModel);
+        out.textContent = `Loaded ${sex} avatar successfully!`;
+      } catch (err) {
+        console.error('Avatar load failed', err);
+        out.textContent = 'Error loading avatar: ' + err.message;
       }
     }
 
-    // SECTION 2: Sign→Text
-    async function initSignToText(){
-      const video = document.getElementById('signVideo'),
-            canvas= document.getElementById('signCanvas'),
-            resP  = document.getElementById('signResult'),
-            ctx   = canvas.getContext('2d');
-      if (!video.srcObject){
-        const stream = await navigator.mediaDevices.getUserMedia({video:true});
-        video.srcObject = stream;
-        await new Promise(r=>video.onloadedmetadata=r);
-        canvas.width  = video.videoWidth;
-        canvas.height = video.videoHeight;
-        resP.textContent = 'Loading detector…';
-        const hands = new Hands({ locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
-        hands.setOptions({ maxNumHands:2, modelComplexity:1, minDetectionConfidence:0.7, minTrackingConfidence:0.7 });
-        hands.onResults(results=>{
-          ctx.drawImage(video,0,0,canvas.width,canvas.height);
-          ctx.strokeStyle='red'; ctx.fillStyle='red'; ctx.lineWidth=2;
-          const list = results.multiHandLandmarks || [];
-          resP.textContent = list.length ? `Detected ${list.length} hand(s)` : 'No hands detected';
-          list.forEach(lm=>{ drawConnectors(ctx,lm,HAND_CONNECTIONS,{color:'red'}); drawLandmarks(ctx,lm,{color:'red'}); });
-        });
-        new Camera(video,{
-          onFrame: async()=> await hands.send({ image: video }),
-          width: video.videoWidth, height: video.videoHeight
-        }).start();
-      }
-    }
-
-    // SECTION 3: Contribute
-    const authDiv   = document.getElementById('authDiv'),
-          capDiv    = document.getElementById('capDiv'),
-          loginBtn  = document.getElementById('loginBtn'),
-          emailIn   = document.getElementById('emailInput'),
-          errP      = document.getElementById('error'),
-          startBtn  = document.getElementById('startCapture'),
-          stopBtn   = document.getElementById('stopCapture'),
-          uploadBtn = document.getElementById('uploadCapture'),
-          statusP   = document.getElementById('captureStatus'),
-          labelIn   = document.getElementById('labelInput'),
-          uploadSt  = document.getElementById('uploadStatus'),
-          contribC  = document.getElementById('contribCanvas'),
-          ctxC      = contribC.getContext('2d');
-    let recording=false, captured=[];
-
-    // reuse video & hands
-    const capVideo = document.getElementById('signVideo');
-    const handsCap = new Hands({ locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
-    handsCap.setOptions({ maxNumHands:2, modelComplexity:1, minDetectionConfidence:0.7, minTrackingConfidence:0.7 });
-    handsCap.onResults(results=>{
-      ctxC.drawImage(capVideo,0,0,400,300);
-      ctxC.strokeStyle='red'; ctxC.fillStyle='red'; ctxC.lineWidth=2;
-      const list=results.multiHandLandmarks||[];
-      list.forEach(lm=>{ drawConnectors(ctxC,lm,HAND_CONNECTIONS,{color:'red'}); drawLandmarks(ctxC,lm,{color:'red'}); });
-      if(recording){ captured.push(list.map(h=>h.map(p=>[p.x,p.y,p.z]))); statusP.textContent=`Recording… ${captured.length} frames`; }
-    });
-    function ensureVideo(){
-      if(!capVideo.srcObject){
-        navigator.mediaDevices.getUserMedia({video:true}).then(s=>{
-          capVideo.srcObject=s;
-          new Camera(capVideo,{ onFrame:async()=>await handsCap.send({ image: capVideo }), width:400, height:300 }).start();
-        });
-      }
-    }
-
-    loginBtn.onclick = ()=>{
-      const e = emailIn.value.trim().toLowerCase();
-      errP.textContent='';
-      if(!e) errP.textContent='Enter your email.';
-      else if(!e.endsWith('@btyss.moe.edu.sg')) errP.textContent='Only @btyss.moe.edu.sg allowed.';
-      else { authDiv.style.display='none'; capDiv.style.display='block'; ensureVideo(); }
-    };
-
-    startBtn.onclick = ()=>{
-      captured=[]; recording=true; statusP.textContent='Recording…';
-      startBtn.disabled=true; stopBtn.disabled=false; uploadBtn.disabled=true; uploadSt.textContent='';
-    };
-    stopBtn.onclick = ()=>{
-      recording=false; statusP.textContent=`Captured ${captured.length} frames`;
-      startBtn.disabled=false; stopBtn.disabled=true; uploadBtn.disabled=false;
-    };
-    uploadBtn.onclick = async ()=>{
-      const label = labelIn.value.trim();
-      if(!label || !captured.length) return uploadSt.textContent='Label+capture required.';
-      uploadSt.textContent='Uploading…';
-      try {
-        const { error } = await supabaseClient
-          .from('signLibrary')
-          .insert([{ label, landmarks: captured }]);
-        if(error) throw error;
-        uploadSt.textContent='Uploaded! Thank you.';
-      } catch(err){
-        console.error('Upload failed', err);
-        uploadSt.textContent='Upload failed; see console.';
-      }
-    };
-
+    document.getElementById('testAvatarBtn').onclick = ()=> loadAvatar('male');
+    document.getElementById('testAvatarFemaleBtn').onclick = ()=> loadAvatar('female');
   })();
   </script>
 </body>
