@@ -3,18 +3,15 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>SgSL Portal ‒ Avatar Debug</title>
+  <title>Avatar Loader Debug</title>
 
-  <!-- 1. Three.js core -->
+  <!-- Three.js core (you can ignore the deprecation warning) -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
-  <!-- 2. Non-module GLTFLoader registers THREE.GLTFLoader -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/loaders/GLTFLoader.js"></script>
 
   <style>
     body { font-family:sans-serif; text-align:center; padding:2rem; margin:0 }
     .section { max-width:480px; margin:2rem auto; padding:1rem; border:1px solid #ccc; background:#fafafa }
     button { font-size:1rem; padding:.5rem 1rem; margin:.5rem }
-    p { margin:.5rem 0; color:#333 }
     #debugAvatar { color: red; min-height:1.2em }
     #avatarContainer { width:400px; height:300px; margin:1rem auto; border:1px solid #666; background:#f0f0f0 }
   </style>
@@ -32,28 +29,28 @@
 
   <script>
   (function(){
-    let avatarScene, avatarCamera, avatarRenderer, avatarModel;
+    let scene, camera, renderer, model;
 
-    function initAvatarCanvas() {
-      if (avatarScene) return;
-      const container = document.getElementById('avatarContainer');
-      avatarScene    = new THREE.Scene();
-      avatarScene.background = new THREE.Color(0xf0f0f0);
-      avatarCamera   = new THREE.PerspectiveCamera(45,400/300,0.1,1000);
-      avatarRenderer = new THREE.WebGLRenderer({antialias:true});
-      avatarRenderer.setSize(400,300);
-      container.innerHTML = '';
-      container.appendChild(avatarRenderer.domElement);
+    function initCanvas(){
+      if (scene) return;
+      const c = document.getElementById('avatarContainer');
+      scene    = new THREE.Scene();
+      scene.background = new THREE.Color(0xf0f0f0);
+      camera   = new THREE.PerspectiveCamera(45,400/300,0.1,1000);
+      renderer = new THREE.WebGLRenderer({antialias:true});
+      renderer.setSize(400,300);
+      c.innerHTML = '';
+      c.appendChild(renderer.domElement);
       const light = new THREE.DirectionalLight(0xffffff,1);
       light.position.set(1,1,1);
-      avatarScene.add(light);
-      avatarScene.add(new THREE.AmbientLight(0x404040));
-      avatarCamera.position.set(0,1.5,3);
-      avatarCamera.lookAt(0,1,0);
-      (function animate(){
-        requestAnimationFrame(animate);
-        if (avatarModel) avatarModel.rotation.y += 0.01;
-        avatarRenderer.render(avatarScene, avatarCamera);
+      scene.add(light);
+      scene.add(new THREE.AmbientLight(0x404040));
+      camera.position.set(0,1.5,3);
+      camera.lookAt(0,1,0);
+      (function renderLoop(){
+        requestAnimationFrame(renderLoop);
+        if (model) model.rotation.y += 0.01;
+        renderer.render(scene, camera);
       })();
     }
 
@@ -61,31 +58,34 @@
       const out = document.getElementById('debugAvatar');
       out.textContent = `Loading ${sex} avatar…`;
       try {
-        initAvatarCanvas();
-        if (!THREE.GLTFLoader) throw new Error('GLTFLoader not loaded');
-        if (avatarModel) avatarScene.remove(avatarModel);
+        initCanvas();
+        if (model) scene.remove(model);
 
         const url = sex==='male'
           ? 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/CesiumMan/glTF/CesiumMan.gltf'
           : 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/Fox/glTF/Fox.gltf';
 
-        const loader = new THREE.GLTFLoader();
+        // Dynamically import the ES module version of GLTFLoader
+        const { GLTFLoader } = await import(
+          'https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js'
+        );
+
+        const loader = new GLTFLoader();
         const gltf = await new Promise((res, rej) =>
           loader.load(url, res, undefined, rej)
         );
-
-        avatarModel = gltf.scene;
-        avatarModel.scale.set(1,1,1);
-        avatarScene.add(avatarModel);
+        model = gltf.scene;
+        model.scale.set(1,1,1);
+        scene.add(model);
         out.textContent = `Loaded ${sex} avatar successfully!`;
       } catch (err) {
         console.error('Avatar load failed', err);
-        out.textContent = 'Error: ' + err.message;
+        out.textContent = 'Error loading avatar: ' + err.message;
       }
     }
 
-    document.getElementById('testAvatarBtn').onclick = () => loadAvatar('male');
-    document.getElementById('testAvatarFemaleBtn').onclick = () => loadAvatar('female');
+    document.getElementById('testAvatarBtn').onclick = ()=> loadAvatar('male');
+    document.getElementById('testAvatarFemaleBtn').onclick = ()=> loadAvatar('female');
   })();
   </script>
 </body>
