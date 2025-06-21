@@ -2,92 +2,563 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
+  <title>SgSL Hub</title>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Avatar Loader Debug (Dynamic Import)</title>
+
+  <!-- Friendly font -->
+  <link rel="preconnect" href="https://fonts.gstatic.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;700&display=swap" rel="stylesheet"/>
+
   <style>
-    body { font-family:sans-serif; text-align:center; padding:2rem; margin:0 }
-    .section { max-width:480px; margin:2rem auto; padding:1rem; border:1px solid #ccc; background:#fafafa }
-    button { font-size:1rem; padding:.5rem 1rem; margin:.5rem }
-    #debugAvatar { color: red; min-height:1.2em }
-    #avatarContainer { width:400px; height:300px; margin:1rem auto; border:1px solid #666; background:#f0f0f0 }
+    :root {
+      --brand-purple: #5c4d7d;
+      --brand-teal:   #4da8da;
+      --bg-light:     #f5f5f5;
+      --text-dark:    #333;
+      --card-bg:      #fff;
+      --transition:   0.3s ease;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0 }
+    body {
+      font-family: 'Nunito', sans-serif;
+      background: var(--bg-light);
+      color: var(--text-dark);
+      line-height: 1.6;
+    }
+    header {
+      background: linear-gradient(135deg, var(--brand-teal) 0%, var(--brand-purple) 100%);
+      color: #fff;
+      padding: 1rem;
+      text-align: center;
+    }
+    nav {
+      display: flex;
+      background: var(--card-bg);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    }
+    nav button {
+      flex: 1;
+      padding: .75rem;
+      background: transparent;
+      border: none;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+    nav button:hover, nav button.active {
+      background: var(--brand-teal);
+      color: #fff;
+    }
+    main {
+      padding: 1rem;
+      max-width: 800px;
+      margin: 1rem auto;
+    }
+    .section-card {
+      background: var(--card-bg);
+      border-radius: 8px;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.1);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      position: relative;
+    }
+    section { display: none }
+    section.active { display: block }
+    input, button { width: 100%; padding: .5rem; margin: .5rem 0; font-size: 1rem }
+    video { display: block; margin: .5rem auto; width: 100%; max-width: 640px }
+    canvas { display: block; margin: .5rem auto; border: 1px solid #ccc }
+    #containerContrib, #containerSTT {
+      position: relative; width: 100%; padding-top: 56.25%;
+    }
+    #containerContrib video, #containerContrib canvas,
+    #containerSTT video, #containerSTT canvas {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    }
+    .status { color: green }
+    .error  { color: red }
+
+/* DEBUG: make the 3D canvas fill its parent and show its border */
+#hand3dCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100% !important;
+  height: 100% !important;
+  border: 3px solid red !important;
+  z-index: 0;
+}
+
   </style>
-</head>
-<body>
 
-  <h1>🔧 Avatar Loader Debug</h1>
-  <section class="section">
-    <h2>Load a 3D Avatar</h2>
-    <button id="loadMale">Load Male Avatar</button>
-    <button id="loadFemale">Load Female Avatar</button>
-    <p id="debugAvatar">(no test yet)</p>
-    <div id="avatarContainer"></div>
-  </section>
-
+  <!-- Supabase client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-  (function(){
-    let scene, camera, renderer, model;
-
-    function log(msg) {
-      document.getElementById('debugAvatar').textContent = msg;
-    }
-
-    function initCanvas(THREE) {
-      if (scene) return;
-      const container = document.getElementById('avatarContainer');
-      scene    = new THREE.Scene();
-      scene.background = new THREE.Color(0xf0f0f0);
-      camera   = new THREE.PerspectiveCamera(45, 400/300, 0.1, 1000);
-      renderer = new THREE.WebGLRenderer({ antialias: true });
-      renderer.setSize(400, 300);
-      container.innerHTML = '';
-      container.appendChild(renderer.domElement);
-
-      const light = new THREE.DirectionalLight(0xffffff,1);
-      light.position.set(1,1,1);
-      scene.add(light);
-      scene.add(new THREE.AmbientLight(0x404040));
-
-      camera.position.set(0,1.5,3);
-      camera.lookAt(0,1,0);
-
-      (function animate(){
-        requestAnimationFrame(animate);
-        if (model) model.rotation.y += 0.01;
-        renderer.render(scene,camera);
-      })();
-    }
-
-    async function loadAvatar(sex) {
-      log(`Starting ${sex} avatar load…`);
-      try {
-        // Dynamically import Three.js and GLTFLoader as ES modules
-        const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js');
-        const { GLTFLoader } = await import('https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js');
-
-        initCanvas(THREE);
-        if (model) scene.remove(model);
-
-        const url = sex==='male'
-          ? 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/CesiumMan/glTF/CesiumMan.gltf'
-          : 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Models@master/2.0/Fox/glTF/Fox.gltf';
-
-        const loader = new GLTFLoader();
-        const gltf = await new Promise((res, rej) =>
-          loader.load(url, res, undefined, rej)
-        );
-        model = gltf.scene;
-        model.scale.set(1,1,1);
-        scene.add(model);
-        log(`Loaded ${sex} avatar successfully!`);
-      } catch (err) {
-        console.error('Avatar load failed', err);
-        log('Error loading avatar: ' + err.message);
-      }
-    }
-
-    document.getElementById('loadMale').onclick   = ()=> loadAvatar('male');
-    document.getElementById('loadFemale').onclick = ()=> loadAvatar('female');
-  })();
+    const SUPABASE_URL      = 'https://lywyeuotzluabeehbdgt.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5d3lldW90emx1YWJlZWhiZGd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAzMDk1OTMsImV4cCI6MjA2NTg4NTU5M30.Iwqd626SUywCXNJK3GGzwOp2D0ORfmO_CEqDtMCTnPg';
+    window.supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   </script>
+
+  <!-- MediaPipe Hands & utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+  <!-- Import map so "three" and its loader resolve -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js",
+      "three/examples/jsm/loaders/GLTFLoader.js":
+        "https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js"
+    }
+  }
+  </script>
+</head>
+
+<body>
+  <header><h1>SgSL Hub</h1></header>
+
+  <nav>
+    <button id="btnContrib" class="active">📝 Contribute</button>
+    <button id="btnTTS">🔤 Text → Sign</button>
+    <button id="btnSTT">🖐️ Sign → Text</button>
+  </nav>
+
+  <main>
+    <!-- 1) Contribute -->
+    <section id="contrib" class="active section-card">
+      <div id="authDivContrib">
+        <input type="email" id="emailInputContrib" placeholder="you@btyss.moe.edu.sg"/>
+        <button id="loginBtnContrib">Continue</button>
+        <p id="errorAuthContrib" class="error"></p>
+      </div>
+      <div id="capDivContrib" style="display:none;">
+        <input type="text" id="labelInputContrib" placeholder="Sign label (e.g. one)"/>
+        <div id="containerContrib">
+          <video id="videoContrib" autoplay playsinline muted></video>
+          <canvas id="overlayContrib"></canvas>
+        </div>
+        <button id="startBtnContrib">Start Capture</button>
+        <button id="stopBtnContrib" disabled>Stop & Upload</button>
+        <p id="statusContrib" class="status"></p>
+        <p id="errorContrib" class="error"></p>
+      </div>
+    </section>
+
+    <!-- 2) Text → Sign -->
+    <section id="tts" class="section-card">
+      <input type="text" id="labelInputTTS" placeholder="Enter a label (e.g. one)"/>
+      <button id="playBtnTTS">Play Sign</button>
+      <p id="statusTTS" class="status"></p>
+      <p id="errorTTS" class="error"></p>
+
+      <!-- 2-canvas wrapper (Text → Sign) -->
+<div id="ttsWrapper"
+     style="position:relative; width:100%; max-width:640px; margin:.5rem auto; height:360px; background:#333;">
+  <!-- 3D canvas with red border for debugging -->
+  <canvas id="hand3dCanvas"
+          width="640" height="360"
+          style="
+            position:absolute;
+            top:0; left:0;
+            width:100%; height:100%;
+            z-index:0;
+            border:3px solid red;
+          ">
+  </canvas>
+  <!-- 2D overlay for green-dot playback -->
+  <canvas id="signCanvasTTS"
+          width="640" height="360"
+          style="
+            position:absolute;
+            top:0; left:0;
+            width:100%; height:100%;
+            z-index:1;
+          ">
+  </canvas>
+</div>
+
+
+      <script>
+      (function(){
+        const labelIn = document.getElementById('labelInputTTS');
+        const playBtn = document.getElementById('playBtnTTS');
+        const statusP = document.getElementById('statusTTS');
+        const errorP  = document.getElementById('errorTTS');
+        const canvas  = document.getElementById('signCanvasTTS');
+        const ctx     = canvas.getContext('2d');
+        let seq = [], iv;
+
+        function drawFrame(handsArr) {
+          ctx.clearRect(0,0,canvas.width,canvas.height);
+          handsArr.forEach(pts => {
+            const lm = pts.map(p=>({ x:p[0], y:p[1] }));
+            drawConnectors(ctx, lm, HAND_CONNECTIONS, { color:'lime', lineWidth:2 });
+            drawLandmarks(ctx, lm, { color:'lime', lineWidth:1 });
+          });
+        }
+
+        async function fetchLandmarks(label) {
+          statusP.textContent='Loading…'; errorP.textContent='';
+          clearInterval(iv);
+          try {
+            const { data, error } = await supabase
+              .from('signLibrary')
+              .select('landmarks')
+              .eq('label', label)
+              .single();
+            if (error) throw error;
+            seq = data.landmarks;
+            if (!seq.length) throw new Error(`No landmarks for “${label}”`);
+            statusP.textContent = `Loaded ${seq.length} frames.`;
+            let i = 0;
+            playBtn.disabled = true;
+            drawFrame([ seq[0][0] ]);
+            updateHandPose(seq[0][0]);
+            iv = setInterval(()=>{
+              if (i < seq.length - 1) {
+                i++;
+                drawFrame([ seq[i][0] ]);
+                updateHandPose(seq[i][0]);
+              } else {
+                clearInterval(iv);
+                playBtn.disabled = false;
+                statusP.textContent = 'Done.';
+              }
+            }, 200);
+          } catch(e) {
+            statusP.textContent=''; errorP.textContent='Error: '+e.message;
+          }
+        }
+
+        playBtn.onclick = () => {
+          const l = labelIn.value.trim();
+          if (!l) { errorP.textContent='Please enter a label.'; return; }
+          fetchLandmarks(l);
+        };
+
+        function updateHandPose(normPts) {
+          const skel = window.__skeleton;
+          if (!skel) return;
+          // position wrist (lm0)
+          const w = normPts[0];
+          const root = skel.getBoneByName('wrist') || skel.bones[0];
+          root.position.set(w[0]-0.5, 0.5-w[1], 0);
+          // rotate index_proximal (lm5→6)
+          const [x0,y0,z0] = normPts[5], [x1,y1,z1] = normPts[6];
+          const v = new THREE.Vector3(x1-x0, y1-y0, z1-z0).normalize();
+          const bone = skel.getBoneByName('index_proximal');
+          if (bone) {
+            const q = new THREE.Quaternion().setFromUnitVectors(
+              new THREE.Vector3(0,1,0), v
+            );
+            bone.quaternion.copy(q);
+          }
+          // …repeat similarly for the other fingers…
+        }
+      })();
+      </script>
+    </section>
+
+    <!-- 3) Sign → Text -->
+    <section id="stt" class="section-card">
+      <div id="containerSTT">
+        <video id="videoSTT" autoplay playsinline muted></video>
+        <canvas id="overlaySTT"></canvas>
+      </div>
+      <button id="startBtnSTT">Start Recognition</button>
+      <button id="stopBtnSTT" disabled>Stop & Recognise</button>
+      <p id="statusSTT" class="status"></p>
+      <p id="errorSTT" class="error"></p>
+      <input type="text" id="resultSTT" readonly placeholder="Recognised label will appear here"/>
+    </section>
+  </main>
+
+  <!-- Tab navigation -->
+  <script>
+    const tabs = [
+      { btn:'btnContrib', sec:'contrib' },
+      { btn:'btnTTS',     sec:'tts'     },
+      { btn:'btnSTT',     sec:'stt'     },
+    ];
+    tabs.forEach(({btn,sec})=>{
+      document.getElementById(btn).onclick = ()=>{
+        tabs.forEach(t=>{
+          document.getElementById(t.btn).classList.remove('active');
+          document.getElementById(t.sec).classList.remove('active');
+        });
+        document.getElementById(btn).classList.add('active');
+        document.getElementById(sec).classList.add('active');
+      };
+    });
+  </script>
+
+  <!-- Contribute logic -->
+  <script>
+    (function(){
+      const authDiv   = document.getElementById('authDivContrib');
+      const capDiv    = document.getElementById('capDivContrib');
+      const emailIn   = document.getElementById('emailInputContrib');
+      const loginBtn  = document.getElementById('loginBtnContrib');
+      const errAuth   = document.getElementById('errorAuthContrib');
+      const labelIn   = document.getElementById('labelInputContrib');
+      const videoEl   = document.getElementById('videoContrib');
+      const overlay   = document.getElementById('overlayContrib');
+      const startBtn  = document.getElementById('startBtnContrib');
+      const stopBtn   = document.getElementById('stopBtnContrib');
+      const statusP   = document.getElementById('statusContrib');
+      const errCap    = document.getElementById('errorContrib');
+
+      let recording = false, frames = [], hands, camera;
+
+      loginBtn.onclick = ()=>{
+        const e = emailIn.value.trim().toLowerCase();
+        if (!e) errAuth.textContent = 'Please enter your school email.';
+        else if (!e.endsWith('@btyss.moe.edu.sg'))
+          errAuth.textContent = 'Only @btyss.moe.edu.sg allowed.';
+        else {
+          errAuth.textContent = '';
+          authDiv.style.display = 'none';
+          capDiv.style.display  = 'block';
+          initHands();
+        }
+      };
+
+      function initHands(){
+        overlay.width  = videoEl.clientWidth;
+        overlay.height = videoEl.clientHeight;
+        const ctx = overlay.getContext('2d');
+        hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+        hands.setOptions({
+          maxNumHands: 2,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.7,
+          minTrackingConfidence: 0.7
+        });
+        hands.onResults(r=>{
+          ctx.clearRect(0,0,overlay.width,overlay.height);
+          ctx.drawImage(r.image,0,0,overlay.width,overlay.height);
+          (r.multiHandLandmarks||[]).forEach(lm=>{
+            drawConnectors(ctx,lm,HAND_CONNECTIONS,{color:'lime',lineWidth:2});
+            drawLandmarks(ctx,lm,{color:'red',lineWidth:1});
+          });
+          if (recording) {
+            frames.push(r.multiHandLandmarks.map(h=>
+              h.map(p=>[p.x,p.y,p.z])
+            ));
+          }
+        });
+        camera = new Camera(videoEl,{
+          onFrame: async ()=> hands.send({ image: videoEl }),
+          width: 640, height: 360
+        });
+        camera.start();
+      }
+
+      startBtn.onclick = ()=>{
+        if (!labelIn.value.trim()) {
+          errCap.textContent = 'Enter a label first.';
+          return;
+        }
+        errCap.textContent = '';
+        frames = [];
+        recording = true;
+        startBtn.disabled = true;
+        stopBtn.disabled  = false;
+        statusP.textContent = 'Recording…';
+      };
+
+      stopBtn.onclick = async ()=>{
+        recording = false;
+        stopBtn.disabled = true;
+        statusP.textContent = `Captured ${frames.length} frames… uploading`;
+        try {
+          const { error } = await supabase
+            .from('signLibrary')
+            .insert([{ label: labelIn.value.trim(), landmarks: frames }]);
+          if (error) throw error;
+          statusP.textContent = '✅ Uploaded landmarks!';
+        } catch(e) {
+          console.error(e);
+          statusP.textContent = '';
+          errCap.textContent  = 'Upload failed: ' + e.message;
+        } finally {
+          startBtn.disabled = false;
+        }
+      };
+    })();
+  </script>
+
+  <!-- Sign → Text logic -->
+  <script>
+    (function(){
+      const videoEl  = document.getElementById('videoSTT');
+      const overlay  = document.getElementById('overlaySTT');
+      const ctx      = overlay.getContext('2d');
+      const startBtn = document.getElementById('startBtnSTT');
+      const stopBtn  = document.getElementById('stopBtnSTT');
+      const statusP  = document.getElementById('statusSTT');
+      const errP     = document.getElementById('errorSTT');
+      const resIn    = document.getElementById('resultSTT');
+
+      let handsSTT, cameraSTT, framesSTT = [], capturing = false;
+
+      function onResults(r){
+        ctx.clearRect(0,0,overlay.width,overlay.height);
+        ctx.drawImage(r.image,0,0,overlay.width,overlay.height);
+        (r.multiHandLandmarks||[]).forEach(lm=>{
+          drawConnectors(ctx,lm,HAND_CONNECTIONS,{color:'lime',lineWidth:2});
+          drawLandmarks(ctx,lm,{color:'red',lineWidth:1});
+        });
+        if (capturing) {
+          framesSTT.push(r.multiHandLandmarks.map(h=>
+            h.map(p=>[p.x,p.y,p.z])
+          ));
+        }
+      }
+
+      function initHandsSTT(){
+        overlay.width  = videoEl.clientWidth;
+        overlay.height = videoEl.clientHeight;
+        handsSTT = new Hands({
+          locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+        });
+        handsSTT.setOptions({
+          maxNumHands: 2,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.7,
+          minTrackingConfidence: 0.7
+        });
+        handsSTT.onResults(onResults);
+        cameraSTT = new Camera(videoEl,{
+          onFrame: async ()=> handsSTT.send({ image: videoEl}),
+          width: 640, height: 360
+        });
+        cameraSTT.start();
+      }
+
+      startBtn.onclick = ()=>{
+        errP.textContent = '';
+        resIn.value = '';
+        if (!handsSTT) initHandsSTT();
+        framesSTT = [];
+        capturing = true;
+        startBtn.disabled = true;
+        stopBtn.disabled  = false;
+        statusP.textContent = 'Capturing…';
+      };
+
+      stopBtn.onclick = async ()=>{
+        capturing = false;
+        stopBtn.disabled = true;
+        statusP.textContent = `Captured ${framesSTT.length} frames. Ready to recognise.`;
+        try {
+          const { data: refs, error: fe } = await supabase
+            .from('signLibrary')
+            .select('label, landmarks');
+          if (fe) throw fe;
+          let best = null, bestScore = Infinity;
+          refs.forEach(e=>{
+            const r = e.landmarks || [];
+            const L = Math.min(r.length, framesSTT.length);
+            if (!L) return;
+            let sum = 0;
+            for (let i = 0; i < L; i++){
+              const a = r[i][0] || [], b = framesSTT[i][0] || [];
+              for (let j = 0; j < Math.min(a.length, b.length); j++){
+                const dx = a[j][0] - b[j][0];
+                const dy = a[j][1] - b[j][1];
+                sum += dx*dx + dy*dy;
+              }
+            }
+            const sc = sum / L;
+            if (sc < bestScore){
+              bestScore = sc;
+              best = e.label;
+            }
+          });
+          if (best){
+            resIn.value = best;
+            statusP.textContent = `Sign recognised as “${best}”`;
+          } else {
+            statusP.textContent = 'No match found';
+          }
+        } catch(e){
+          console.error(e);
+          errP.textContent = 'Error during recognise: ' + e.message;
+        } finally {
+          startBtn.disabled = false;
+        }
+      };
+    })();
+  </script>
+
+  <!-- === Three.js + GLTFLoader via ES-Module === -->
+  <script type="module">
+  import * as THREE     from 'three';
+  import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
+  // make THREE global for your other code
+  window.THREE = THREE;
+
+  // 1) Grab & size the canvas
+  const canvas3d = document.getElementById('hand3dCanvas');
+  const renderer = new THREE.WebGLRenderer({
+    canvas: canvas3d,
+    alpha: true,
+    antialias: true
+  });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(canvas3d.clientWidth, canvas3d.clientHeight);
+
+  // 2) Camera — now looking at the origin!
+  const aspect = canvas3d.clientWidth / canvas3d.clientHeight;
+  const frust  = 2;
+  const camera3d = new THREE.OrthographicCamera(
+    -frust * aspect/2, frust * aspect/2,
+     frust/2,        -frust/2,
+    0.1, 10
+  );
+  camera3d.position.set(0, 0, 2);
+  camera3d.lookAt(0, 0, 0);
+
+  // 3) Scene & light
+  const scene = new THREE.Scene();
+  scene.background = null;
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1));
+
+  // ── DEBUG CUBE ──
+  const debugCube = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.5, 0.5),
+    new THREE.MeshNormalMaterial()
+  );
+  scene.add(debugCube);
+
+  // 4) Load your hand model
+  const loader = new GLTFLoader();
+  loader.load(
+    './rigged-hand.glb',
+    gltf => {
+      console.log('✅ Hand model loaded');
+      const hand = gltf.scene;
+      hand.scale.set(0.7, 0.7, 0.7);
+      scene.add(hand);
+
+      // expose skeleton for your TTS mapping
+      const skinned = hand.getObjectByProperty('type', 'SkinnedMesh');
+      window.__skeleton = skinned.skeleton;
+      console.log('Bones:', window.__skeleton.bones.map(b=>b.name));
+    },
+    xhr => xhr.total && console.log(`Loading hand: ${(xhr.loaded/xhr.total*100).toFixed(1)}%`),
+    err => console.error('❌ GLTF error', err)
+  );
+
+  // 5) Render loop
+  (function animate() {
+    requestAnimationFrame(animate);
+    renderer.render(scene, camera3d);
+  })();
+</script>
+
 </body>
 </html>
