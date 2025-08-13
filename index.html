@@ -1,212 +1,442 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8"/>
-    <title>SgSL Hub - Dev Workbench</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1"/>
-    <link rel="preconnect" href="https://fonts.gstatic.com"/>
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;700&display=swap" rel="stylesheet"/>
-    <style>
-        :root{--brand-purple:#5c4d7d;--brand-teal:#4da8da;--bg-light:#f5f5f5;--text-dark:#333;--card-bg:#fff;--transition:0.3s ease}
-        *{box-sizing:border-box;margin:0;padding:0}body{font-family:'Nunito',sans-serif;background:var(--bg-light);color:var(--text-dark);line-height:1.6}header{background:linear-gradient(135deg,var(--brand-teal) 0%,var(--brand-purple) 100%);color:#fff;padding:1rem;text-align:center}nav{display:flex;background:var(--card-bg);box-shadow:0 1px 4px rgba(0,0,0,0.1)}nav button{flex:1;padding:.75rem;background:transparent;border:none;font-size:1rem;cursor:pointer;transition:var(--transition)}nav button:hover,nav button.active{background:var(--brand-teal);color:#fff}main{padding:1rem;max-width:800px;margin:1rem auto}.section-card{background:var(--card-bg);border-radius:8px;box-shadow:0 1px 6px rgba(0,0,0,0.1);padding:1.5rem;margin-bottom:1.5rem;position:relative}section{display:none}section.active{display:block}input,button{width:100%;padding:.5rem;margin:.5rem 0;font-size:1rem}video{display:block;margin:.5rem auto;width:100%;max-width:640px}canvas{display:block;margin:.5rem auto;border:1px solid #ccc}#containerContrib,#containerSTT{position:relative;width:100%;padding-top:56.25%}#containerContrib video,#containerContrib canvas,#containerSTT video,#containerSTT canvas{position:absolute;top:0;left:0;width:100%;height:100%}.status{color:green}.error{color:red}#ttsWrapper{position:relative;width:100%;max-width:640px;margin:.5rem auto;height:360px;background:#333}
-    </style>
+  <meta charset="utf-8"/>
+  <title>SgSL Hub — No-GLB, Single File</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;700&display=swap" rel="stylesheet"/>
+  <style>
+    :root{--brand-purple:#5c4d7d;--brand-teal:#4da8da;--bg-light:#f5f5f5;--text-dark:#333;--card-bg:#fff;--transition:0.3s ease}
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Nunito',sans-serif;background:var(--bg-light);color:var(--text-dark);line-height:1.6}
+    header{background:linear-gradient(135deg,var(--brand-teal) 0%,var(--brand-purple) 100%);color:#fff;padding:1rem;text-align:center}
+    nav{display:flex;background:var(--card-bg);box-shadow:0 1px 4px rgba(0,0,0,0.1)}
+    nav button{flex:1;padding:.75rem;background:transparent;border:none;font-size:1rem;cursor:pointer;transition:var(--transition)}
+    nav button:hover,nav button.active{background:var(--brand-teal);color:#fff}
+    main{padding:1rem;max-width:900px;margin:1rem auto}
+    .section-card{background:var(--card-bg);border-radius:8px;box-shadow:0 1px 6px rgba(0,0,0,0.1);padding:1.5rem;margin-bottom:1.5rem;position:relative}
+    section{display:none}section.active{display:block}
+    input,button{width:100%;padding:.6rem;margin:.5rem 0;font-size:1rem}
+    video{display:block;margin:.5rem auto;width:100%;max-width:720px}
+    canvas{display:block;margin:.5rem auto;border:1px solid #ccc}
+    #containerContrib,#containerSTT{position:relative;width:100%;padding-top:56.25%}
+    #containerContrib video,#containerContrib canvas,#containerSTT video,#containerSTT canvas{position:absolute;top:0;left:0;width:100%;height:100%}
+    .status{color:green}.error{color:#b00020}
+    #ttsWrapper{position:relative;width:100%;max-width:720px;margin:.5rem auto;height:420px;background:#111;border-radius:8px}
+  </style>
 
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-    
-    <script type="importmap">
-    {
-        "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js",
-        "three/examples/jsm/loaders/GLTFLoader.js": "https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js",
-        "three/examples/jsm/controls/OrbitControls.js": "https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/controls/OrbitControls.js"
-        }
+  <!-- libs -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+  <!-- three.js (module) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.module.js",
+      "three/examples/jsm/controls/OrbitControls.js": "https://cdn.jsdelivr.net/npm/three@0.155.0/examples/jsm/controls/OrbitControls.js"
     }
-    </script>
+  }
+  </script>
 </head>
 
 <body>
-    <header><h1>SgSL Hub</h1></header>
-    <nav>
-        <button id="btnContrib" class="active">📝 Contribute</button>
-        <button id="btnTTS">🔤 Text → Sign</button>
-        <button id="btnSTT">🖐️ Sign → Text</button>
-    </nav>
-    <main>
-        <section id="contrib" class="section-card"></section>
-        <section id="stt" class="section-card"></section>
-        <section id="tts" class="section-card">
-            <input type="text" id="labelInputTTS" placeholder="Enter a label (e.g. two)"/>
-            <button id="playBtnTTS" disabled>Play Sign</button>
-            <p id="statusTTS" class="status">3D Scene not initialized. Click this tab to load.</p>
-            <p id="errorTTS" class="error"></p>
-            <div id="ttsWrapper"><canvas id="hand3dCanvas"></canvas></div>
-        </section>
-    </main>
-    
-    <script>
-        const SUPABASE_URL = 'https://lywyeuotzluabeehbdgt.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5d3lldW90emx1YWJlZWhiZGd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAzMDk1OTMsImV4cCI6MjA2NTg4NTU5M30.Iwqd626SUywCXNJK3GGzwOp2D0ORfmO_CEqDtMCTnPg';
-        window.supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    </script>
-    
-    <script id="script-contrib"></script>
-    <script id="script-stt"></script>
-    <script>
-        function loadScripts() {
-            document.getElementById('contrib').innerHTML = `<div id="authDivContrib"><input type="email" id="emailInputContrib" placeholder="you@btyss.moe.edu.sg"/><button id="loginBtnContrib">Continue</button><p id="errorAuthContrib" class="error"></p></div><div id="capDivContrib" style="display:none;"><input type="text" id="labelInputContrib" placeholder="Sign label (e.g. one)"/><div id="containerContrib"><video id="videoContrib" autoplay playsinline muted></video><canvas id="overlayContrib"></canvas></div><button id="startBtnContrib">Start Capture</button><button id="stopBtnContrib" disabled>Stop & Upload</button><p id="statusContrib" class="status"></p><p id="errorContrib" class="error"></p></div>`;
-            document.getElementById('stt').innerHTML = `<div id="containerSTT"><video id="videoSTT" autoplay playsinline muted></video><canvas id="overlaySTT"></canvas></div><button id="startBtnSTT">Start Recognition</button><button id="stopBtnSTT" disabled>Stop & Recognise</button><p id="statusSTT" class="status"></p><p id="errorSTT" class="error"></p><input type="text" id="resultSTT" readonly placeholder="Recognised label will appear here"/>`;
-            document.getElementById('script-contrib').textContent = `(${function() {const authDiv=document.getElementById("authDivContrib"),capDiv=document.getElementById("capDivContrib"),emailIn=document.getElementById("emailInputContrib"),loginBtn=document.getElementById("loginBtnContrib"),errAuth=document.getElementById("errorAuthContrib"),labelIn=document.getElementById("labelInputContrib"),videoEl=document.getElementById("videoContrib"),overlay=document.getElementById("overlayContrib"),startBtn=document.getElementById("startBtnContrib"),stopBtn=document.getElementById("stopBtnContrib"),statusP=document.getElementById("statusContrib"),errCap=document.getElementById("errorContrib");let recording=!1,frames=[],hands,camera;loginBtn.onclick=()=>{const e=emailIn.value.trim().toLowerCase();e?e.endsWith("@btyss.moe.edu.sg")?(errAuth.textContent="",authDiv.style.display="none",capDiv.style.display="block",initHands()):errAuth.textContent="Only @btyss.moe.edu.sg allowed.":errAuth.textContent="Please enter your school email."},initHands=function(){overlay.width=videoEl.clientWidth,overlay.height=videoEl.clientHeight;const e=overlay.getContext("2d");hands=new Hands({locateFile:e=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${e}`}),hands.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.7,minTrackingConfidence:.7}),hands.onResults(t=>{e.clearRect(0,0,overlay.width,overlay.height),e.drawImage(t.image,0,0,overlay.width,overlay.height),(t.multiHandLandmarks||[]).forEach(n=>{drawConnectors(e,n,HAND_CONNECTIONS,{color:"lime",lineWidth:2}),drawLandmarks(e,n,{color:"red",lineWidth:1})}),recording&&frames.push(t.multiHandLandmarks.map(e=>e.map(e=>[e.x,e.y,e.z])))}),camera=new Camera(videoEl,{onFrame:async()=>hands.send({image:videoEl}),width:640,height:360}),camera.start()},startBtn.onclick=()=>{labelIn.value.trim()?(errCap.textContent="",frames=[],recording=!0,startBtn.disabled=!0,stopBtn.disabled=!1,statusP.textContent="Recording…"):errCap.textContent="Enter a label first."},stopBtn.onclick=async()=>{recording=!1,stopBtn.disabled=!0,statusP.textContent=`Captured ${frames.length} frames… uploading`;try{const{error:e}=await window.supabase.from("signLibrary").insert([{label:labelIn.value.trim(),landmarks:frames}]);if(e)throw e;statusP.textContent="✅ Uploaded landmarks!"}catch(e){console.error(e),statusP.textContent="",errCap.textContent="Upload failed: "+e.message}finally{startBtn.disabled=!1}}}.toString()})();`;
-            document.getElementById('script-stt').textContent = `(${function() {const videoEl=document.getElementById("videoSTT"),overlay=document.getElementById("overlaySTT"),ctx=overlay.getContext("2d"),startBtn=document.getElementById("startBtnSTT"),stopBtn=document.getElementById("stopBtnSTT"),statusP=document.getElementById("statusSTT"),errP=document.getElementById("errorSTT"),resIn=document.getElementById("resultSTT");let handsSTT,cameraSTT,framesSTT=[],capturing=!1;function onResults(e){ctx.clearRect(0,0,overlay.width,overlay.height),ctx.drawImage(e.image,0,0,overlay.width,overlay.height),(e.multiHandLandmarks||[]).forEach(t=>{drawConnectors(ctx,t,HAND_CONNECTIONS,{color:"lime",lineWidth:2}),drawLandmarks(ctx,t,{color:"red",lineWidth:1})}),capturing&&framesSTT.push(e.multiHandLandmarks.map(e=>e.map(e=>[e.x,e.y,e.z])))}function initHandsSTT(){overlay.width=videoEl.clientWidth,overlay.height=videoEl.clientHeight,handsSTT=new Hands({locateFile:e=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${e}`}),handsSTT.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.7,minTrackingConfidence:.7}),handsSTT.onResults(onResults),cameraSTT=new Camera(videoEl,{onFrame:async()=>handsSTT.send({image:videoEl}),width:640,height:360}),cameraSTT.start()}startBtn.onclick=()=>{errP.textContent="",resIn.value="",handsSTT||initHandsSTT(),framesSTT=[],capturing=!0,startBtn.disabled=!0,stopBtn.disabled=!1,statusP.textContent="Capturing…"},stopBtn.onclick=async()=>{capturing=!1,stopBtn.disabled=!0,statusP.textContent=`Captured ${framesSTT.length} frames. Ready to recognise.`;try{const{data:e,error:t}=await window.supabase.from("signLibrary").select("label, landmarks");if(t)throw t;let n=null,a=1/0;e.forEach(e=>{const t=e.landmarks||[],s=Math.min(t.length,framesSTT.length);if(s){let r=0;for(let n=0;n<s;n++){const s=t[n]?.[0]||[],o=framesSTT[n]?.[0]||[];for(let e=0;e<Math.min(s.length,o.length);e++){const t=s[e][0]-o[e][0],n=s[e][1]-o[e][1];r+=t*t+n*n}}const o=r/s;o<a&&(a=o,n=e.label)}}),n?(resIn.value=n,statusP.textContent=`Sign recognised as “${n}”`):statusP.textContent="No match found"}catch(e){console.error(e),errP.textContent="Error during recognise: "+e.message}finally{startBtn.disabled=!1}}}.toString()})();`;
-        }
-        
-        const tabs = [ { btn: 'btnContrib', sec: 'contrib' }, { btn: 'btnTTS', sec: 'tts' }, { btn: 'btnSTT', sec: 'stt' }, ];
-        tabs.forEach(({ btn, sec }) => {
-            document.getElementById(btn).onclick = () => {
-                tabs.forEach(t => {
-                    document.getElementById(t.btn).classList.remove('active');
-                    document.getElementById(t.sec).style.display = 'none';
-                });
-                document.getElementById(btn).classList.add('active');
-                document.getElementById(sec).style.display = 'block';
-                if (btn === 'btnTTS') { window.initializeTTSScene(); }
-            };
-        });
-        loadScripts();
-        document.getElementById('btnContrib').click();
-    </script>
+<header><h1>SgSL Hub</h1></header>
+<nav>
+  <button id="btnContrib" class="active">📝 Contribute</button>
+  <button id="btnTTS">🔤 Text → Sign</button>
+  <button id="btnSTT">🖐️ Sign → Text</button>
+</nav>
+<main>
+  <section id="contrib" class="section-card"></section>
 
+  <section id="tts" class="section-card">
+    <input type="text" id="labelInputTTS" placeholder="Enter a label (e.g. two)"/>
+    <button id="playBtnTTS" disabled>Play Sign</button>
+    <p id="statusTTS" class="status">3D Scene not initialized. Click this tab to load.</p>
+    <p id="errorTTS" class="error"></p>
+    <div id="ttsWrapper"></div>
+  </section>
+
+  <section id="stt" class="section-card"></section>
+</main>
+
+<!-- Supabase config (yours) -->
+<script>
+  const SUPABASE_URL = 'https://lywyeuotzluabeehbdgt.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5d3lldW90emx1YWJlZWhiZGd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAzMDk1OTMsImV4cCI6MjA2NTg4NTU5M30.Iwqd626SUywCXNJK3GGzwOp2D0ORfmO_CEqDtMCTnPg';
+  window.supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+</script>
+
+<!-- Feature extraction + DTW (same as before under the hood) -->
+<script>
+  function vsub(a,b){return [a[0]-b[0],a[1]-b[1],(a[2]??0)-(b[2]??0)];}
+  function vmul(a,s){return [a[0]*s,a[1]*s,(a[2]??0)*s];}
+  function vdot(a,b){return a[0]*b[0]+a[1]*b[1]+(a[2]??0)*(b[2]??0);}
+  function vnorm(a){const n=Math.hypot(a[0],a[1],a[2]??0);return n?vmul(a,1/n):[0,0,0];}
+  function cross(a,b){return [a[1]*(b[2]??0)-(a[2]??0)*b[1], (a[2]??0)*b[0]-a[0]*(b[2]??0), a[0]*b[1]-a[1]*b[0]];}
+  function rotateToBasis(p, ex, ey, ez){return [vdot(p,ex), vdot(p,ey), vdot(p,ez)];}
+
+  function resampleSeq(frames, N=32){
+    if(!frames.length) return [];
+    const out=[]; const L=frames.length;
+    for(let i=0;i<N;i++){
+      const t=(i*(L-1))/(N-1), i0=Math.floor(t), i1=Math.min(L-1,i0+1), a=t-i0;
+      const f0=frames[i0], f1=frames[i1];
+      out.push(f0.map((lm,idx)=>[
+        lm[0]*(1-a)+f1[idx][0]*a,
+        lm[1]*(1-a)+f1[idx][1]*a,
+        (lm[2]??0)*(1-a)+(f1[idx][2]??0)*a
+      ]));
+    }
+    return out;
+  }
+  function dtwDistance(A,B){
+    const n=A.length,m=B.length; if(!n||!m) return Infinity;
+    const dp=Array.from({length:n+1},()=>Array(m+1).fill(Infinity)); dp[0][0]=0;
+    const l2=(a,b)=>{let s=0; for(let i=0;i<a.length;i++){const d=a[i]-b[i]; s+=d*d;} return Math.sqrt(s);};
+    for(let i=1;i<=n;i++){
+      for(let j=1;j<=m;j++){
+        const d=l2(A[i-1],B[j-1]);
+        dp[i][j]=d+Math.min(dp[i-1][j],dp[i][j-1],dp[i-1][j-1]);
+      }
+    }
+    return dp[n][m]/(n+m);
+  }
+  function normalizeFrame(frame){
+    const wrist=frame[0], palmRef=frame[9];
+    const scale=Math.hypot(palmRef[0]-wrist[0],palmRef[1]-wrist[1],(palmRef[2]??0)-(wrist[2]??0))||1e-5;
+    const ez=vnorm(vsub(palmRef,wrist)); let ex=vnorm(vsub(frame[5],wrist)); let ey=vnorm(cross(ez,ex)); ex=vnorm(cross(ey,ez));
+    return frame.map(lm=>{
+      const p=[(lm[0]-wrist[0])/scale,(lm[1]-wrist[1])/scale,((lm[2]??0)-(wrist[2]??0))/scale];
+      return rotateToBasis(p,ex,ey,ez);
+    });
+  }
+  function frameToFeatures(norm){
+    const pairs=[[0,5],[0,9],[0,17],[4,8],[8,12],[12,16],[16,20],[4,8],[4,12],[4,16],[4,20]];
+    const bones=[[0,1],[1,2],[2,3],[3,4],[5,6],[6,7],[7,8],[9,10],[10,11],[11,12],[13,14],[14,15],[15,16],[17,18],[18,19],[19,20]];
+    const dir=[]; for(const [a,b] of bones){const d=vnorm(vsub(norm[b],norm[a])); dir.push(d[0],d[1],d[2]);}
+    const dist=[]; for(const [a,b] of pairs){const d=vsub(norm[b],norm[a]); dist.push(Math.hypot(d[0],d[1],d[2]));}
+    return dir.concat(dist);
+  }
+  function sequenceToFeatureSeq(seq){ return resampleSeq(seq,32).map(f=>frameToFeatures(normalizeFrame(f))); }
+  window.sequenceToFeatureSeq = sequenceToFeatureSeq;
+</script>
+
+<!-- Build Contribute + STT (your old look/feel) -->
+<script>
+  function loadScripts(){
+    // -------- Contribute (domain check only) ----------
+    document.getElementById('contrib').innerHTML =
+    `<h2>📝 Contribute a Sign</h2>
+     <div id="authDivContrib">
+        <input type="email" id="emailInputContrib" placeholder="you@btyss.moe.edu.sg"/>
+        <button id="loginBtnContrib">Continue</button>
+        <p id="errorAuthContrib" class="error"></p>
+     </div>
+     <div id="capDivContrib" style="display:none;">
+        <input type="text" id="labelInputContrib" placeholder="Sign label (e.g. one)"/>
+        <div id="containerContrib">
+          <video id="videoContrib" autoplay playsinline muted></video>
+          <canvas id="overlayContrib"></canvas>
+        </div>
+        <button id="startBtnContrib">Start Capture</button>
+        <button id="stopBtnContrib" disabled>Stop & Upload</button>
+        <p id="statusContrib" class="status"></p>
+        <p id="errorContrib" class="error"></p>
+     </div>`;
+
+    // -------- STT (green dots/lines) ----------
+    document.getElementById('stt').innerHTML =
+    `<h2>🖐️ Sign → Text</h2>
+      <div id="containerSTT">
+        <video id="videoSTT" autoplay playsinline muted></video>
+        <canvas id="overlaySTT"></canvas>
+      </div>
+      <button id="startBtnSTT">Start Recognition</button>
+      <button id="stopBtnSTT" disabled>Stop & Recognise</button>
+      <p id="statusSTT" class="status"></p>
+      <p id="errorSTT" class="error"></p>
+      <input type="text" id="resultSTT" readonly placeholder="Recognised label will appear here"/>`;
+
+    // ----- wire Contribute -----
+    (function(){
+      const authDiv=document.getElementById("authDivContrib"),
+            capDiv=document.getElementById("capDivContrib"),
+            emailIn=document.getElementById("emailInputContrib"),
+            loginBtn=document.getElementById("loginBtnContrib"),
+            errAuth=document.getElementById("errorAuthContrib"),
+            labelIn=document.getElementById("labelInputContrib"),
+            videoEl=document.getElementById("videoContrib"),
+            overlay=document.getElementById("overlayContrib"),
+            startBtn=document.getElementById("startBtnContrib"),
+            stopBtn=document.getElementById("stopBtnContrib"),
+            statusP=document.getElementById("statusContrib"),
+            errCap=document.getElementById("errorContrib");
+
+      let recording=false, frames=[], hands, camera;
+
+      loginBtn.onclick=()=>{
+        const e=emailIn.value.trim().toLowerCase();
+        if(!e){ errAuth.textContent="Please enter your school email."; return; }
+        if(!e.endsWith("@btyss.moe.edu.sg")){ errAuth.textContent="Only @btyss.moe.edu.sg allowed."; return; }
+        errAuth.textContent=""; authDiv.style.display="none"; capDiv.style.display="block"; initHands();
+      };
+
+      function initHands(){
+        overlay.width=videoEl.clientWidth; overlay.height=videoEl.clientHeight;
+        const ctx=overlay.getContext("2d");
+        const hands=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+        hands.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.7,minTrackingConfidence:.7});
+        hands.onResults(r=>{
+          ctx.clearRect(0,0,overlay.width,overlay.height);
+          ctx.drawImage(r.image,0,0,overlay.width,overlay.height);
+          (r.multiHandLandmarks||[]).forEach(n=>{
+            drawConnectors(ctx,n,HAND_CONNECTIONS,{color:"lime",lineWidth:2});
+            drawLandmarks(ctx,n,{color:"red",lineWidth:1});
+          });
+          if(recording){
+            frames.push((r.multiHandLandmarks||[]).map(h=>h.map(p=>[p.x,p.y,p.z])));
+          }
+        });
+        camera=new Camera(videoEl,{onFrame:async()=>hands.send({image:videoEl}),width:640,height:360});
+        camera.start();
+      }
+
+      startBtn.onclick=()=>{
+        if(!labelIn.value.trim()){ errCap.textContent="Enter a label first."; return; }
+        errCap.textContent=""; frames=[]; recording=true; startBtn.disabled=true; stopBtn.disabled=false; statusP.textContent="Recording…";
+      };
+
+      stopBtn.onclick=async ()=>{
+        recording=false; stopBtn.disabled=true; statusP.textContent=`Captured ${frames.length} frames… uploading`;
+        try{
+          const firstHandSeq = frames.map(fr=>fr?.[0]).filter(Boolean);
+          const featureSeq = window.sequenceToFeatureSeq(firstHandSeq||[]);
+          const { error:e } = await window.supabase.from("signLibrary").insert([{
+            label: labelIn.value.trim(),
+            landmarks: frames,
+            features: featureSeq
+          }]);
+          if(e) throw e;
+          statusP.textContent="✅ Uploaded landmarks + features!";
+        }catch(e){
+          console.error(e); statusP.textContent=""; errCap.textContent="Upload failed: "+e.message;
+        }finally{
+          startBtn.disabled=false;
+        }
+      };
+    })();
+
+    // ----- wire STT (DTW) -----
+    ;(function(){
+      const videoEl=document.getElementById("videoSTT"),
+            overlay=document.getElementById("overlaySTT"),
+            ctx=overlay.getContext("2d"),
+            startBtn=document.getElementById("startBtnSTT"),
+            stopBtn=document.getElementById("stopBtnSTT"),
+            statusP=document.getElementById("statusSTT"),
+            errP=document.getElementById("errorSTT"),
+            resIn=document.getElementById("resultSTT");
+
+      let handsSTT,cameraSTT,framesSTT=[],capturing=false;
+
+      function onResults(e){
+        overlay.width=overlay.clientWidth; overlay.height=overlay.clientHeight;
+        ctx.clearRect(0,0,overlay.width,overlay.height);
+        ctx.drawImage(e.image,0,0,overlay.width,overlay.height);
+        (e.multiHandLandmarks||[]).forEach(t=>{
+          drawConnectors(ctx,t,HAND_CONNECTIONS,{color:"lime",lineWidth:2});
+          drawLandmarks(ctx,t,{color:"red",lineWidth:1});
+        });
+        if(capturing){
+          framesSTT.push((e.multiHandLandmarks||[]).map(h=>h.map(p=>[p.x,p.y,p.z])));
+        }
+      }
+
+      function initHandsSTT(){
+        handsSTT=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+        handsSTT.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:.7,minTrackingConfidence:.7});
+        handsSTT.onResults(onResults);
+        cameraSTT=new Camera(videoEl,{onFrame:async()=>handsSTT.send({image:videoEl}),width:640,height:360});
+        cameraSTT.start();
+      }
+
+      startBtn.onclick=()=>{
+        errP.textContent=""; resIn.value="";
+        if(!handsSTT) initHandsSTT();
+        framesSTT=[]; capturing=true; startBtn.disabled=true; stopBtn.disabled=false; statusP.textContent="Capturing…";
+      };
+
+      stopBtn.onclick=async ()=>{
+        capturing=false; stopBtn.disabled=true; statusP.textContent=`Captured ${framesSTT.length} frames. Recognising…`;
+        try{
+          const firstHandSeq = framesSTT.map(fr=>fr?.[0]).filter(Boolean);
+          if(!firstHandSeq.length) throw new Error("No hand detected.");
+          const queryFeatures = window.sequenceToFeatureSeq(firstHandSeq);
+
+          const { data: rows, error: t } = await window.supabase.from("signLibrary").select("label, features, landmarks");
+          if(t) throw t;
+
+          let best=null, score=Infinity;
+          for(const r of rows){
+            const ref = (r.features && r.features.length) ? r.features
+                       : window.sequenceToFeatureSeq((r.landmarks||[]).map(fr=>fr?.[0]).filter(Boolean));
+            if(!ref?.length) continue;
+            const s = dtwDistance(queryFeatures, ref);
+            if(s < score){ score=s; best=r.label; }
+          }
+          if(best){
+            resIn.value=best; statusP.textContent=`Sign recognised as “${best}” (score ${score.toFixed(3)})`;
+          }else{
+            statusP.textContent="No match found";
+          }
+        }catch(e){
+          console.error(e); errP.textContent="Error during recognise: "+e.message;
+        }finally{
+          startBtn.disabled=false;
+        }
+      };
+    })();
+  } // loadScripts()
+
+  // Tabs
+  const tabs=[{btn:'btnContrib',sec:'contrib'},{btn:'btnTTS',sec:'tts'},{btn:'btnSTT',sec:'stt'}];
+  tabs.forEach(({btn,sec})=>{
+    document.getElementById(btn).onclick=()=>{
+      tabs.forEach(t=>{document.getElementById(t.btn).classList.remove('active');document.getElementById(t.sec).style.display='none';});
+      document.getElementById(btn).classList.add('active');document.getElementById(sec).style.display='block';
+      if(btn==='btnTTS'){ window.initTTS(); }
+    };
+  });
+  loadScripts();
+  document.getElementById('btnContrib').click();
+</script>
+
+<!-- TTS = Procedural 3D hand skeleton (no GLB required) -->
 <script type="module">
-    import * as THREE from 'three';
-    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-    // ===================================================================
-    // === EXPERIMENTATION WORKBENCH =====================================
-    // ===================================================================
-    const SMOOTHING_FACTOR = 0.3; // Lower is smoother (0.1-0.9)
-    const INITIAL_HAND_ROTATION = { x: Math.PI / 2, y: 0, z: 0 };
-    function remapLandmark(lm) { return new THREE.Vector3(lm[0], 1 - lm[1], lm[2]); }
-    // ===================================================================
+const HAND_CONNECTIONS_LIST = [
+  [0,1],[1,2],[2,3],[3,4],      // thumb
+  [0,5],[5,6],[6,7],[7,8],      // index
+  [5,9],[9,10],[10,11],[11,12], // middle
+  [9,13],[13,14],[14,15],[15,16], // ring
+  [13,17],[17,18],[18,19],[19,20], // pinky
+  [0,17]
+];
 
-    let sceneInitialized = false;
-    let updateHandPose = () => {};
-    const initialBoneDirections = {};
+let inited=false, joints=[], lines=[], currentSeq=[], playing=false, idx=0, prevPose=null;
 
-    function calculateInitialDirections(skeleton) {
-        skeleton.bones.forEach(bone => {
-            if (bone.children.length > 0 && bone.children[0].isBone) {
-                initialBoneDirections[bone.name] = bone.children[0].position.clone().normalize();
-            }
-        });
-        console.log("Calculated initial bone directions:", initialBoneDirections);
-    }
+function to3D(p){
+  const S=2.0;
+  return new THREE.Vector3((p[0]-0.5)*S, (0.5-p[1])*S, -(p[2]??0)*0.7);
+}
+function smoothPose(curr, alpha=0.6){
+  if(!prevPose || prevPose.length!==curr.length){ prevPose = curr.map(p=>p.slice()); return curr; }
+  const out = curr.map((p,i)=>[
+    prevPose[i][0]*(1-alpha)+p[0]*alpha,
+    prevPose[i][1]*(1-alpha)+p[1]*alpha,
+    (prevPose[i][2]??0)*(1-alpha)+(p[2]??0)*alpha
+  ]);
+  prevPose = out.map(p=>p.slice()); return out;
+}
 
-    window.initializeTTSScene = function() {
-        if (sceneInitialized) return; 
-        sceneInitialized = true;
-        console.log("Initializing TTS 3D Scene with Anti-Twist Animation.");
+function buildScene(){
+  const wrapper = document.getElementById('ttsWrapper');
+  const canvas = document.createElement('canvas'); wrapper.innerHTML=''; wrapper.appendChild(canvas);
 
-        const statusP = document.getElementById('statusTTS');
-        const errorP = document.getElementById('errorTTS');
-        const playBtn = document.getElementById('playBtnTTS');
-        
-        statusP.textContent = 'Loading 3D model...';
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(50, wrapper.clientWidth/wrapper.clientHeight, 0.1, 100);
+  camera.position.set(0,0,2.2);
 
-        const canvas3d = document.getElementById('hand3dCanvas');
-        const wrapper = document.getElementById('ttsWrapper');
-        
-        const scene = new THREE.Scene();
-        scene.background = null; 
-        
-        const camera = new THREE.PerspectiveCamera(50, wrapper.clientWidth / wrapper.clientHeight, 0.1, 100);
-        camera.position.set(0, 0, 35); 
-        
-        const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, alpha: true, antialias: true });
-        renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.setSize(wrapper.clientWidth, wrapper.clientHeight);
+  const renderer = new THREE.WebGLRenderer({canvas, alpha:true, antialias:true});
+  renderer.setSize(wrapper.clientWidth, wrapper.clientHeight);
+  renderer.setPixelRatio(devicePixelRatio);
 
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-        
-        scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2));
-        scene.add(new THREE.DirectionalLight(0xffffff, 1));
+  const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping=true;
 
-        const loader = new GLTFLoader();
-        loader.load("./rigged-hand.glb", (gltf) => {
-            const hand = gltf.scene;
-            hand.scale.set(30, 30, 30);
-            hand.rotation.set(INITIAL_HAND_ROTATION.x, INITIAL_HAND_ROTATION.y, INITIAL_HAND_ROTATION.z);
-            scene.add(hand);
+  scene.add(new THREE.HemisphereLight(0xffffff,0x333333, 1.2));
+  const dl = new THREE.DirectionalLight(0xffffff, 0.8); dl.position.set(2,2,3); scene.add(dl);
 
-            const skinnedMesh = hand.getObjectByProperty('type', 'SkinnedMesh');
-            if (!skinnedMesh) {
-                errorP.textContent = "Error: Could not find a 'SkinnedMesh' in your model.";
-                return;
-            }
-            const skeleton = skinnedMesh.skeleton;
-            
-            calculateInitialDirections(skeleton);
+  const group = new THREE.Group(); scene.add(group);
 
-            updateHandPose = (normPts) => {
-                if (!normPts || normPts.length < 21) return;
+  const jGeom = new THREE.SphereGeometry(0.018,16,16);
+  const jMat  = new THREE.MeshStandardMaterial({metalness:0.1, roughness:0.6});
+  for(let i=0;i<21;i++){ const m=new THREE.Mesh(jGeom,jMat); group.add(m); joints.push(m); }
 
-                const rotateBone = (boneName, fromIdx, toIdx) => {
-                    const bone = skeleton.getBoneByName(boneName);
-                    const baseBoneVector = initialBoneDirections[boneName] || new THREE.Vector3(0, 1, 0);
-                    if (!bone) return;
-                    
-                    const lmFrom = normPts[fromIdx];
-                    const lmTo = normPts[toIdx];
-                    if (!lmFrom || !lmTo) return;
+  const lineMat = new THREE.LineBasicMaterial();
+  HAND_CONNECTIONS_LIST.forEach(([a,b])=>{
+    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+    const ln = new THREE.Line(geo, lineMat); group.add(ln); lines.push({a,b,ln});
+  });
 
-                    const vFrom = remapLandmark(lmFrom);
-                    const vTo = remapLandmark(lmTo);
+  window.addEventListener('resize', ()=>{
+    renderer.setSize(wrapper.clientWidth, wrapper.clientHeight);
+    camera.aspect = wrapper.clientWidth/wrapper.clientHeight;
+    camera.updateProjectionMatrix();
+  });
 
-                    const v = new THREE.Vector3().subVectors(vTo, vFrom).normalize();
-                    const q = new THREE.Quaternion().setFromUnitVectors(baseBoneVector, v);
+  function render(){
+    requestAnimationFrame(render);
+    controls.update();
 
-                    // --- THIS IS THE ANTI-TWIST FIX ---
-                    // If the new rotation is backwards, flip it to the shortest path
-                    if (bone.quaternion.dot(q) < 0) {
-                        q.negate();
-                    }
-                    // ------------------------------------
-                    
-                    bone.quaternion.slerp(q, SMOOTHING_FACTOR);
-                };
-                
-                // Animation calls remain the same
-                rotateBone('thumb_baseR_03', 0, 1);
-                rotateBone('index_baseR_012', 0, 5);
-                rotateBone('middle_baseR_020', 0, 9);
-                rotateBone('ring_baseR_028', 0, 13);
-                rotateBone('pinky_baseR_036', 0, 17);
-                rotateBone('thumb_01R_08', 1, 2); rotateBone('thumb_02R_09', 2, 3); rotateBone('thumb_03R_010', 3, 4);
-                rotateBone('index_01R_017', 5, 6); rotateBone('index_02R_018', 6, 7); rotateBone('index_03R_019', 7, 8);
-                rotateBone('middle_01R_025', 9, 10); rotateBone('middle_02R_026', 10, 11); rotateBone('middle_03R_027', 11, 12);
-                rotateBone('ring_01R_033', 13, 14); rotateBone('ring_02R_034', 14, 15); rotateBone('ring_03R_035', 15, 16);
-                rotateBone('pinky_01R_041', 17, 18); rotateBone('pinky_02R_042', 18, 19); rotateBone('pinky_03R_043', 19, 20);
-            };
-
-            statusP.textContent = "Model loaded. Ready to play signs.";
-            playBtn.disabled = false;
-        });
-
-        const supabase = window.supabase;
-        const labelIn = document.getElementById('labelInputTTS');
-        let ttsSeq = [], ttsInterval;
-
-        async function fetchLandmarks(label) {
-            statusP.textContent = 'Loading sign data…'; clearInterval(ttsInterval); try { const { data, error } = await supabase.from('signLibrary').select('landmarks').eq('label', label).single(); if (error) throw error; ttsSeq = data.landmarks.filter(frame => frame && frame.length > 0 && frame[0]); if (!ttsSeq.length) throw new Error(`No valid landmarks for “${label}”`); statusP.textContent = `Playing...`; let i = 0; playBtn.disabled = true; updateHandPose(ttsSeq[0][0]); ttsInterval = setInterval(() => { if (i < ttsSeq.length) { updateHandPose(ttsSeq[i][0]); i++; } else { clearInterval(ttsInterval); playBtn.disabled = false; statusP.textContent = 'Done.'; } }, 100); } catch (e) { errorP.textContent = 'Error: ' + e.message; playBtn.disabled = false; }
+    if(playing && currentSeq.length){
+      if(idx < currentSeq.length){
+        const pose = smoothPose(currentSeq[idx++]);
+        // apply
+        for(let i=0;i<21;i++){
+          joints[i].position.copy(to3D(pose[i]));
         }
-        playBtn.onclick = () => { const l = labelIn.value.trim(); if (l) fetchLandmarks(l); };
-
-        function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
-        animate();
+        lines.forEach(({a,b,ln})=>{
+          const pos = ln.geometry.attributes.position;
+          const A = joints[a].position, B=joints[b].position;
+          pos.setXYZ(0,A.x,A.y,A.z); pos.setXYZ(1,B.x,B.y,B.z); pos.needsUpdate = true;
+        });
+      }else{
+        playing=false; idx=0;
+      }
     }
+    renderer.render(scene,camera);
+  }
+  render();
+
+  inited=true;
+}
+
+async function playLabel(label){
+  const statusP=document.getElementById('statusTTS');
+  const errorP=document.getElementById('errorTTS');
+  const btn=document.getElementById('playBtnTTS');
+
+  try{
+    btn.disabled=true; errorP.textContent=""; statusP.textContent="Loading sign data…";
+    const { data, error } = await window.supabase.from('signLibrary').select('landmarks').eq('label', label).limit(1);
+    if(error) throw error;
+    const seq = (data?.[0]?.landmarks||[]).map(fr=>fr?.[0]).filter(Boolean);
+    if(!seq.length) throw new Error(`No landmarks found for “${label}”`);
+    currentSeq = seq; idx=0; playing=true; statusP.textContent="Playing…";
+  }catch(e){
+    errorP.textContent = e.message;
+  }finally{
+    btn.disabled=false;
+  }
+}
+
+window.initTTS = function(){
+  if(!inited){ buildScene(); }
+  document.getElementById('statusTTS').textContent = "3D scene ready (procedural hand).";
+  const btn = document.getElementById('playBtnTTS');
+  btn.disabled=false;
+  btn.onclick = ()=>{
+    const txt = (document.getElementById('labelInputTTS').value||"").trim();
+    if(txt) playLabel(txt);
+  };
+};
 </script>
 
 </body>
