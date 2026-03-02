@@ -107,9 +107,10 @@ def _retrain_classifier():
 
 
 # --- Serve frontend ---
-app.mount("/css", StaticFiles(directory=str(FRONTEND / "css")), name="css")
-app.mount("/js", StaticFiles(directory=str(FRONTEND / "js")), name="js")
-app.mount("/assets", StaticFiles(directory=str(FRONTEND / "assets")), name="assets")
+for static_dir in ("css", "js", "assets"):
+    dir_path = FRONTEND / static_dir
+    if dir_path.is_dir():
+        app.mount(f"/{static_dir}", StaticFiles(directory=str(dir_path)), name=static_dir)
 
 
 @app.get("/")
