@@ -144,11 +144,18 @@
                 </div>
               </div>
               <div class="playback-controls hidden" id="playback-controls">
-                <button id="replay-btn" class="btn btn-sm">↻ Replay</button>
-                <div class="speed-control">
-                  <label>Speed:</label>
-                  <input type="range" id="speed-slider" min="0.25" max="2" step="0.25" value="1">
-                  <span id="speed-value">1x</span>
+                <div class="playback-progress-bar">
+                  <div class="playback-progress-fill" id="playback-progress"></div>
+                </div>
+                <div class="playback-buttons">
+                  <button id="replay-btn" class="btn btn-sm">↻ Replay</button>
+                  <button id="pause-btn" class="btn btn-sm">Pause</button>
+                  <span class="frame-counter" id="frame-counter">0 / 0</span>
+                  <div class="speed-control">
+                    <label>Speed:</label>
+                    <input type="range" id="speed-slider" min="0.25" max="2" step="0.25" value="1">
+                    <span id="speed-value">1x</span>
+                  </div>
                 </div>
               </div>
               <p id="tts-status" class="status"></p>
