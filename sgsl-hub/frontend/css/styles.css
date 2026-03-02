@@ -622,6 +622,140 @@ input::placeholder { color: var(--text-3); }
 }
 
 /* ============================================================
+   Auth UI
+   ============================================================ */
+.auth-area {
+  margin-top: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.auth-email {
+  font-size: 0.78rem;
+  opacity: 0.85;
+  font-weight: 500;
+}
+.auth-signin-btn {
+  background: rgba(255,255,255,0.15) !important;
+  color: #fff !important;
+  border: 1px solid rgba(255,255,255,0.25) !important;
+}
+.auth-signin-btn:hover {
+  background: rgba(255,255,255,0.25) !important;
+}
+
+/* Auth gate (contribute section) */
+.auth-gate {
+  display: flex;
+  justify-content: center;
+  padding: 2rem 0;
+}
+.auth-gate-card {
+  text-align: center;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 3rem 2rem !important;
+}
+.auth-gate-card svg {
+  color: var(--primary);
+  margin-bottom: 0.5rem;
+}
+.auth-gate-card h2 {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+.auth-gate-card > p {
+  color: var(--text-2);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.auth-gate-note {
+  font-size: 0.78rem !important;
+  color: var(--text-3) !important;
+  margin-top: 0.5rem;
+}
+
+/* ============================================================
+   Login modal
+   ============================================================ */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.modal {
+  position: relative;
+  background: var(--surface);
+  border-radius: var(--r-xl);
+  padding: 2rem;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: var(--shadow-lg);
+  animation: fadeUp 0.3s ease;
+}
+.modal h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+.modal-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--text-3);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: var(--ease);
+}
+.modal-close:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.modal-desc {
+  color: var(--text-2);
+  font-size: 0.88rem;
+  margin-bottom: 1rem;
+  line-height: 1.5;
+}
+.modal-note {
+  font-size: 0.78rem;
+  color: var(--text-3);
+  text-align: center;
+  margin-top: 1rem;
+  line-height: 1.4;
+}
+.login-error {
+  color: var(--danger);
+  font-size: 0.82rem;
+  margin-bottom: 0.5rem;
+}
+.login-btn {
+  width: 100%;
+  padding: 0.75rem !important;
+  font-size: 0.95rem !important;
+}
+
+/* ============================================================
    Toast notifications
    ============================================================ */
 .toast-container {
@@ -679,6 +813,9 @@ input::placeholder { color: var(--text-3); }
   .card { padding: 1rem; }
   .logo { font-size: 1.3rem; }
   .btn-row { flex-direction: column; }
+  .auth-area { margin-top: 0.5rem; }
+  .auth-email { font-size: 0.7rem; }
+  .auth-gate-card { padding: 2rem 1.25rem !important; }
 }
 
 @media (max-width: 480px) {

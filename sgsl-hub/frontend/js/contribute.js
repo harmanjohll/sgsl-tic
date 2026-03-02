@@ -8,6 +8,7 @@
 import { HandTracker } from './camera.js';
 import { contribute } from './api.js';
 import { setStatus, toast } from './app.js';
+import { getEmail } from './auth.js';
 
 let tracker = null;
 let recording = false;
@@ -96,7 +97,7 @@ export function initContribute() {
     setStatus(statusEl, `Uploading "${label}" (${frames.length} frames)...`, 'loading');
 
     try {
-      const result = await contribute(label, frames);
+      const result = await contribute(label, frames, getEmail());
       setStatus(statusEl, `Saved "${label}" — ${result.frames} frames, ${result.features} features.`, 'success');
       toast(`Sign "${label}" contributed!`, 'success');
     } catch (err) {

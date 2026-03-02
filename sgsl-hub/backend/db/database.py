@@ -29,14 +29,21 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_signs_label ON signs(label);
     """)
+    # Migrate: add status and verified_by columns if missing
+    columns = [row["name"] for row in conn.execute("PRAGMA table_info(signs)").fetchall()]
+    if "status" not in columns:
+        conn.execute("ALTER TABLE signs ADD COLUMN status TEXT DEFAULT 'pending'")
+    if "verified_by" not in columns:
+        conn.execute("ALTER TABLE signs ADD COLUMN verified_by TEXT")
+    conn.commit()
     conn.close()
 
 
 def save_sign(label: str, landmarks: list, features: list | None = None, contributor: str | None = None):
     conn = get_connection()
     conn.execute(
-        "INSERT INTO signs (label, landmarks, features, contributor) VALUES (?, ?, ?, ?)",
-        (label, json.dumps(landmarks), json.dumps(features) if features else None, contributor),
+        "INSERT INTO signs (label, landmarks, features, contributor, status) VALUES (?, ?, ?, ?, ?)",
+        (label, json.dumps(landmarks), json.dumps(features) if features else None, contributor, "pending"),
     )
     conn.commit()
     conn.close()
@@ -83,6 +90,25 @@ def get_all_signs_with_features():
             "features": json.loads(r["features"]),
         })
     return results
+
+
+def update_sign_status(sign_id: int, status: str, verified_by: str | None = None):
+    conn = get_connection()
+    conn.execute(
+        "UPDATE signs SET status = ?, verified_by = ? WHERE id = ?",
+        (status, verified_by, sign_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_pending_signs():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, label, contributor, status, created_at FROM signs WHERE status = 'pending' ORDER BY created_at DESC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 init_db()

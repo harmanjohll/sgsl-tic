@@ -48,6 +48,7 @@
           SgSL Hub
         </h1>
         <p class="tagline">Singapore Sign Language — Learn, Contribute, Translate</p>
+        <div class="auth-area" id="auth-area"></div>
       </div>
     </header>
 
@@ -83,73 +84,94 @@
       <!-- ===== Contribute Section ===== -->
       <section id="contribute" class="section active" role="tabpanel">
 
-        <!-- Step 1: Label -->
-        <div class="card">
-          <div class="card-header">
-            <span class="step-badge">Step 1</span>
-            <h2>Name the Sign</h2>
-            <p class="card-desc">Type the word or phrase this sign represents.</p>
-          </div>
-          <div class="input-row">
-            <input type="text" id="label-input" placeholder="e.g. hello, thank you, one" autocomplete="off">
+        <!-- Auth gate (shown when not signed in) -->
+        <div class="auth-gate" id="contribute-auth-gate">
+          <div class="card auth-gate-card">
+            <svg viewBox="0 0 48 48" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="10" y="22" width="28" height="20" rx="4"/>
+              <path d="M16 22V16a8 8 0 0116 0v6"/>
+              <circle cx="24" cy="33" r="2.5"/>
+              <path d="M24 35.5v3"/>
+            </svg>
+            <h2>Sign in to Contribute</h2>
+            <p>Help build the SgSL library by contributing sign recordings. Sign in with your school email to get started.</p>
+            <button class="btn btn-primary" id="auth-gate-signin">Sign In</button>
+            <p class="auth-gate-note">Anyone can browse and learn signs. Authentication is only needed to contribute new recordings.</p>
           </div>
         </div>
 
-        <!-- Step 2: Record -->
-        <div class="card">
-          <div class="card-header">
-            <span class="step-badge">Step 2</span>
-            <h2>Record the Sign</h2>
-            <p class="card-desc">Position your hand in front of the camera, then hit record.</p>
-          </div>
+        <!-- Contribute flow (shown when signed in) -->
+        <div id="contribute-content" class="hidden">
 
-          <!-- Camera permission prompt -->
-          <div class="camera-prompt" id="contribute-camera-prompt">
-            <div class="camera-prompt-icon">
-              <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="6" y="12" width="28" height="24" rx="4"/>
-                <path d="M34 20 L42 15 V33 L34 28"/>
-              </svg>
+          <!-- Step 1: Label -->
+          <div class="card">
+            <div class="card-header">
+              <span class="step-badge">Step 1</span>
+              <h2>Name the Sign</h2>
+              <p class="card-desc">Type the word or phrase this sign represents.</p>
             </div>
-            <h3>Camera Access Needed</h3>
-            <p>We need your camera to track hand movements using MediaPipe. No video is stored — only hand landmark coordinates are saved.</p>
-            <button class="btn btn-primary" id="contribute-enable-camera">Enable Camera</button>
+            <div class="input-row">
+              <input type="text" id="label-input" placeholder="e.g. hello, thank you, one" autocomplete="off">
+            </div>
           </div>
 
-          <!-- Video feed (hidden until camera enabled) -->
-          <div class="video-area hidden" id="contribute-video-area">
-            <div class="video-container">
-              <video id="contribute-video" autoplay playsinline muted></video>
-              <canvas id="contribute-canvas"></canvas>
-              <div class="hand-status" id="contribute-hand-status">
-                <span class="hand-dot"></span>
-                <span>Waiting for hand...</span>
+          <!-- Step 2: Record -->
+          <div class="card">
+            <div class="card-header">
+              <span class="step-badge">Step 2</span>
+              <h2>Record the Sign</h2>
+              <p class="card-desc">Position your hand in front of the camera, then hit record.</p>
+            </div>
+
+            <!-- Camera permission prompt -->
+            <div class="camera-prompt" id="contribute-camera-prompt">
+              <div class="camera-prompt-icon">
+                <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="6" y="12" width="28" height="24" rx="4"/>
+                  <path d="M34 20 L42 15 V33 L34 28"/>
+                </svg>
               </div>
-              <div class="rec-badge hidden" id="rec-badge">
-                <span class="rec-pulse"></span>
-                <span>REC</span>
-                <span class="rec-timer" id="rec-timer">0.0s</span>
+              <h3>Camera Access Needed</h3>
+              <p>We need your camera to track hand movements using MediaPipe. No video is stored — only hand landmark coordinates are saved.</p>
+              <button class="btn btn-primary" id="contribute-enable-camera">Enable Camera</button>
+            </div>
+
+            <!-- Video feed (hidden until camera enabled) -->
+            <div class="video-area hidden" id="contribute-video-area">
+              <div class="video-container">
+                <video id="contribute-video" autoplay playsinline muted></video>
+                <canvas id="contribute-canvas"></canvas>
+                <div class="hand-status" id="contribute-hand-status">
+                  <span class="hand-dot"></span>
+                  <span>Waiting for hand...</span>
+                </div>
+                <div class="rec-badge hidden" id="rec-badge">
+                  <span class="rec-pulse"></span>
+                  <span>REC</span>
+                  <span class="rec-timer" id="rec-timer">0.0s</span>
+                </div>
+                <div class="countdown-overlay hidden" id="countdown-overlay"></div>
               </div>
-              <div class="countdown-overlay hidden" id="countdown-overlay"></div>
+              <div class="btn-row">
+                <button id="record-btn" class="btn btn-success" disabled>Record</button>
+                <button id="stop-btn" class="btn btn-danger" disabled>Stop & Save</button>
+              </div>
             </div>
-            <div class="btn-row">
-              <button id="record-btn" class="btn btn-success" disabled>Record</button>
-              <button id="stop-btn" class="btn btn-danger" disabled>Stop & Save</button>
-            </div>
+
+            <p id="contribute-status" class="status-msg"></p>
           </div>
 
-          <p id="contribute-status" class="status-msg"></p>
-        </div>
+          <div class="info-card">
+            <h4>How it works</h4>
+            <p>
+              Your hand movements are tracked in real-time using MediaPipe Hands.
+              Each recording captures 21 hand landmarks per frame, encoding both shape
+              <strong>and</strong> motion. These are sent to the Python backend where
+              59-dimensional feature vectors are extracted and stored. A machine-learning
+              classifier (k-NN + DTW) is retrained after every new contribution.
+            </p>
+          </div>
 
-        <div class="info-card">
-          <h4>How it works</h4>
-          <p>
-            Your hand movements are tracked in real-time using MediaPipe Hands.
-            Each recording captures 21 hand landmarks per frame, encoding both shape
-            <strong>and</strong> motion. These are sent to the Python backend where
-            59-dimensional feature vectors are extracted and stored. A machine-learning
-            classifier (k-NN + DTW) is retrained after every new contribution.
-          </p>
         </div>
       </section>
 
@@ -269,6 +291,21 @@
       <p class="footer-sub">MediaPipe Hands + DTW + k-NN · Python backend · SQLite</p>
     </footer>
 
+  </div>
+
+  <!-- Login modal -->
+  <div class="modal-overlay hidden" id="login-modal">
+    <div class="modal">
+      <button class="modal-close" id="modal-close-btn">&times;</button>
+      <h2>Sign in to SgSL Hub</h2>
+      <p class="modal-desc">Enter your school email address to contribute signs to the library.</p>
+      <div class="input-row">
+        <input type="email" id="login-email" placeholder="your.name@btyss.moe.edu.sg" autocomplete="email">
+      </div>
+      <p class="login-error hidden" id="login-error"></p>
+      <button class="btn btn-primary login-btn" id="login-submit-btn">Sign In</button>
+      <p class="modal-note">Anyone can browse signs and use recognition. Sign-in is only required for contributing new signs.</p>
+    </div>
   </div>
 
   <!-- Toast container -->
