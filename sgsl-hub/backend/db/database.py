@@ -1,114 +1,185 @@
-"""SQLite database layer for SgSL Hub."""
+"""
+Database layer for SgSL Hub.
 
-import sqlite3
+Uses PostgreSQL (Supabase) when DATABASE_URL is set,
+falls back to SQLite for local development.
+"""
+
 import json
 import os
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "sgsl.db"
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+# psycopg2 requires postgresql:// scheme
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+_USE_PG = bool(DATABASE_URL)
+
+if _USE_PG:
+    import psycopg2
+    import psycopg2.extras
+else:
+    import sqlite3
+    _SQLITE_PATH = str(Path(__file__).parent / "sgsl.db")
 
 
-def get_connection():
-    conn = sqlite3.connect(str(DB_PATH))
+# --- Connection helpers ---
+
+def _conn():
+    if _USE_PG:
+        return psycopg2.connect(DATABASE_URL)
+    conn = sqlite3.connect(_SQLITE_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 
-def init_db():
-    conn = get_connection()
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS signs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            label TEXT NOT NULL,
-            landmarks TEXT NOT NULL,
-            features TEXT,
-            contributor TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_signs_label ON signs(label);
-    """)
-    # Migrate: add status and verified_by columns if missing
-    columns = [row["name"] for row in conn.execute("PRAGMA table_info(signs)").fetchall()]
-    if "status" not in columns:
-        conn.execute("ALTER TABLE signs ADD COLUMN status TEXT DEFAULT 'pending'")
-    if "verified_by" not in columns:
-        conn.execute("ALTER TABLE signs ADD COLUMN verified_by TEXT")
-    conn.commit()
+def _exec(conn, sql, params=None):
+    """Execute SQL, converting ? placeholders to %s for PostgreSQL."""
+    if _USE_PG:
+        cur = conn.cursor()
+        cur.execute(sql.replace("?", "%s"), params)
+        return cur
+    return conn.execute(sql, params or ())
+
+
+def _fetchall(cur):
+    """Fetch all rows as list of dicts."""
+    if _USE_PG:
+        if cur.description is None:
+            return []
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+    return [dict(r) for r in cur.fetchall()]
+
+
+def _close(conn, cur=None):
+    if cur and _USE_PG:
+        cur.close()
     conn.close()
 
 
+def _json_out(val):
+    """Deserialize JSON/JSONB column — PostgreSQL returns dicts/lists natively."""
+    if val is None:
+        return None
+    if isinstance(val, (list, dict)):
+        return val
+    return json.loads(val)
+
+
+# --- Schema ---
+
+def init_db():
+    conn = _conn()
+    if _USE_PG:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS signs (
+                id SERIAL PRIMARY KEY,
+                label TEXT NOT NULL,
+                landmarks JSONB NOT NULL,
+                features JSONB,
+                contributor TEXT,
+                status TEXT DEFAULT 'pending',
+                verified_by TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_signs_label ON signs(label)")
+        conn.commit()
+        cur.close()
+    else:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS signs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL,
+                landmarks TEXT NOT NULL,
+                features TEXT,
+                contributor TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_signs_label ON signs(label);
+        """)
+        columns = [row["name"] for row in conn.execute("PRAGMA table_info(signs)").fetchall()]
+        if "status" not in columns:
+            conn.execute("ALTER TABLE signs ADD COLUMN status TEXT DEFAULT 'pending'")
+        if "verified_by" not in columns:
+            conn.execute("ALTER TABLE signs ADD COLUMN verified_by TEXT")
+        conn.commit()
+    conn.close()
+
+
+# --- CRUD ---
+
 def save_sign(label: str, landmarks: list, features: list | None = None, contributor: str | None = None):
-    conn = get_connection()
-    conn.execute(
+    conn = _conn()
+    cur = _exec(conn,
         "INSERT INTO signs (label, landmarks, features, contributor, status) VALUES (?, ?, ?, ?, ?)",
         (label, json.dumps(landmarks), json.dumps(features) if features else None, contributor, "pending"),
     )
     conn.commit()
-    conn.close()
+    _close(conn, cur)
 
 
 def get_all_labels():
-    conn = get_connection()
-    rows = conn.execute("SELECT label, COUNT(*) as count FROM signs GROUP BY label ORDER BY label").fetchall()
-    conn.close()
+    conn = _conn()
+    cur = _exec(conn, "SELECT label, COUNT(*) as count FROM signs GROUP BY label ORDER BY label")
+    rows = _fetchall(cur)
+    _close(conn, cur)
     return [{"label": r["label"], "count": r["count"]} for r in rows]
 
 
 def get_sign_by_label(label: str, limit: int = 1):
-    conn = get_connection()
-    rows = conn.execute(
+    conn = _conn()
+    cur = _exec(conn,
         "SELECT id, label, landmarks, features, contributor, created_at FROM signs WHERE label = ? LIMIT ?",
         (label, limit),
-    ).fetchall()
-    conn.close()
-    results = []
-    for r in rows:
-        results.append({
-            "id": r["id"],
-            "label": r["label"],
-            "landmarks": json.loads(r["landmarks"]),
-            "features": json.loads(r["features"]) if r["features"] else None,
-            "contributor": r["contributor"],
-        })
-    return results
+    )
+    rows = _fetchall(cur)
+    _close(conn, cur)
+    return [{
+        "id": r["id"],
+        "label": r["label"],
+        "landmarks": _json_out(r["landmarks"]),
+        "features": _json_out(r["features"]),
+        "contributor": r["contributor"],
+    } for r in rows]
 
 
 def get_all_signs_with_features():
-    conn = get_connection()
-    rows = conn.execute(
-        "SELECT id, label, landmarks, features FROM signs WHERE features IS NOT NULL"
-    ).fetchall()
-    conn.close()
-    results = []
-    for r in rows:
-        results.append({
-            "id": r["id"],
-            "label": r["label"],
-            "landmarks": json.loads(r["landmarks"]),
-            "features": json.loads(r["features"]),
-        })
-    return results
+    conn = _conn()
+    cur = _exec(conn, "SELECT id, label, landmarks, features FROM signs WHERE features IS NOT NULL")
+    rows = _fetchall(cur)
+    _close(conn, cur)
+    return [{
+        "id": r["id"],
+        "label": r["label"],
+        "landmarks": _json_out(r["landmarks"]),
+        "features": _json_out(r["features"]),
+    } for r in rows]
 
 
 def update_sign_status(sign_id: int, status: str, verified_by: str | None = None):
-    conn = get_connection()
-    conn.execute(
+    conn = _conn()
+    cur = _exec(conn,
         "UPDATE signs SET status = ?, verified_by = ? WHERE id = ?",
         (status, verified_by, sign_id),
     )
     conn.commit()
-    conn.close()
+    _close(conn, cur)
 
 
 def get_pending_signs():
-    conn = get_connection()
-    rows = conn.execute(
-        "SELECT id, label, contributor, status, created_at FROM signs WHERE status = 'pending' ORDER BY created_at DESC"
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    conn = _conn()
+    cur = _exec(conn,
+        "SELECT id, label, contributor, status, created_at FROM signs WHERE status = 'pending' ORDER BY created_at DESC",
+    )
+    rows = _fetchall(cur)
+    _close(conn, cur)
+    return rows
 
 
 init_db()
