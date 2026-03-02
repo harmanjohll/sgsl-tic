@@ -12,11 +12,15 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from pathlib import Path
+import os
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from db.database import save_sign, get_all_labels, get_sign_by_label, get_all_signs_with_features
+from db.database import (
+    save_sign, get_all_labels, get_sign_by_label,
+    get_all_signs_with_features, update_sign_status, get_pending_signs,
+)
 from ml.recognizer import (
     extract_sequence_features,
     recognize_dtw,
@@ -26,6 +30,11 @@ from ml.recognizer import (
 app = FastAPI(title="SgSL Hub", version="2.0")
 
 FRONTEND = Path(__file__).parent.parent / "frontend"
+
+# Allowed email domains for contributors (comma-separated env var)
+ALLOWED_DOMAINS = [
+    d.strip() for d in os.environ.get("ALLOWED_DOMAINS", "btyss.moe.edu.sg").split(",") if d.strip()
+]
 
 
 # --- Pydantic models ---
@@ -37,6 +46,27 @@ class ContributeRequest(BaseModel):
 
 class RecognizeRequest(BaseModel):
     landmarks: list
+
+
+class LoginRequest(BaseModel):
+    email: str
+
+
+class VerifyRequest(BaseModel):
+    status: str
+    verified_by: str | None = None
+
+
+# --- Auth ---
+@app.post("/api/auth/login")
+def login(req: LoginRequest):
+    email = req.email.strip().lower()
+    if "@" not in email:
+        raise HTTPException(400, "Invalid email address")
+    domain = email.split("@", 1)[1]
+    if domain not in ALLOWED_DOMAINS:
+        raise HTTPException(403, "Only emails from approved school domains can contribute")
+    return {"status": "ok", "email": email, "role": "contributor"}
 
 
 # --- API routes ---
@@ -61,8 +91,16 @@ def contribute(req: ContributeRequest):
     if not req.landmarks or len(req.landmarks) < 3:
         raise HTTPException(400, "Recording too short — need at least 3 frames")
 
+    # Validate contributor email domain
+    if not req.contributor:
+        raise HTTPException(401, "Sign in with your school email to contribute")
+    contributor = req.contributor.strip().lower()
+    domain = contributor.split("@", 1)[1] if "@" in contributor else ""
+    if domain not in ALLOWED_DOMAINS:
+        raise HTTPException(403, "Only approved school email domains can contribute signs")
+
     features = extract_sequence_features(req.landmarks)
-    save_sign(label, req.landmarks, features, req.contributor)
+    save_sign(label, req.landmarks, features, contributor)
 
     _retrain_classifier()
 
@@ -104,6 +142,20 @@ def retrain():
 def _retrain_classifier():
     library = get_all_signs_with_features()
     classifier.train(library)
+
+
+# --- Admin endpoints (sign verification) ---
+@app.get("/api/admin/pending")
+def list_pending():
+    return get_pending_signs()
+
+
+@app.post("/api/admin/verify/{sign_id}")
+def verify_sign(sign_id: int, req: VerifyRequest):
+    if req.status not in ("verified", "rejected", "pending"):
+        raise HTTPException(400, "Status must be 'verified', 'rejected', or 'pending'")
+    update_sign_status(sign_id, req.status, req.verified_by)
+    return {"status": "ok"}
 
 
 # --- Serve frontend ---
