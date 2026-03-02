@@ -3,8 +3,8 @@
    ============================================================ */
 
 // Supabase
-const SUPABASE_URL  = 'https://lywyeuotzluabeehbdgt.supabase.co';
-const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5d3lldW90emx1YWJlZWhiZGd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAzMDk1OTMsImV4cCI6MjA2NTg4NTU5M30.Iwqd626SUywCXNJK3GGzwOp2D0ORfmO_CEqDtMCTnPg';
+const SUPABASE_URL  = 'https://voiowxoqcjpjoxyvaxgp.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZvaW93eG9xY2pwam94eXZheGdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0Mzg2MDksImV4cCI6MjA4ODAxNDYwOX0.Tqg6GlbqcW284U3-SO94fU3esHy4yoyuJ-xHn7Psosc';
 
 export const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
