@@ -7,7 +7,9 @@ falls back to SQLite for local development.
 
 import json
 import os
+import socket
 from pathlib import Path
+from urllib.parse import urlparse
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 # psycopg requires postgresql:// scheme
@@ -23,11 +25,33 @@ else:
     _SQLITE_PATH = str(Path(__file__).parent / "sgsl.db")
 
 
+# --- IPv4 fix for Render + Supabase ---
+# Render does not support IPv6 outbound. Supabase hostnames often resolve
+# to IPv6 first, causing "Network is unreachable". We force IPv4 resolution
+# by resolving the hostname ourselves and passing hostaddr to libpq.
+
+def _pg_url_ipv4(url):
+    """Add hostaddr parameter to force IPv4 connection."""
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        return url
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port, socket.AF_INET, socket.SOCK_STREAM)
+        if infos:
+            ipv4 = infos[0][4][0]
+            sep = '&' if '?' in url else '?'
+            print(f"[DB] Resolved {parsed.hostname} -> {ipv4} (IPv4)")
+            return f"{url}{sep}hostaddr={ipv4}"
+    except socket.gaierror as e:
+        print(f"[DB] WARNING: IPv4 resolution failed for {parsed.hostname}: {e}")
+    return url
+
+
 # --- Connection helpers ---
 
 def _conn():
     if _USE_PG:
-        return psycopg.connect(DATABASE_URL)
+        return psycopg.connect(_pg_url_ipv4(DATABASE_URL))
     conn = sqlite3.connect(_SQLITE_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -95,6 +119,10 @@ def init_db():
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_signs_label ON signs(label)")
             conn.commit()
+
+            # Auto-migrate data from old "signLibrary" table if it exists
+            _migrate_from_sign_library(conn)
+
             cur.close()
             print("[DB] PostgreSQL initialized successfully")
         else:
@@ -120,6 +148,40 @@ def init_db():
         print(f"[DB] WARNING: init_db error: {e}")
     finally:
         conn.close()
+
+
+def _migrate_from_sign_library(conn):
+    """Copy data from the old signLibrary table to signs (one-time migration)."""
+    try:
+        cur = conn.cursor()
+        # Check if signLibrary exists
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'signLibrary'
+            )
+        """)
+        if not cur.fetchone()[0]:
+            return
+
+        # Check if signs is empty (don't re-migrate)
+        cur.execute("SELECT COUNT(*) FROM signs")
+        if cur.fetchone()[0] > 0:
+            return
+
+        # Copy data
+        cur.execute("""
+            INSERT INTO signs (label, landmarks, features, status, created_at)
+            SELECT label, landmarks, features, 'verified', created_at
+            FROM public."signLibrary"
+            WHERE landmarks IS NOT NULL
+        """)
+        conn.commit()
+        count = cur.rowcount
+        print(f"[DB] Migrated {count} signs from signLibrary to signs table")
+        cur.close()
+    except Exception as e:
+        print(f"[DB] NOTE: signLibrary migration skipped: {e}")
 
 
 # --- CRUD ---
