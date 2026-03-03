@@ -10,15 +10,14 @@ import os
 from pathlib import Path
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-# psycopg2 requires postgresql:// scheme
+# psycopg requires postgresql:// scheme
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 _USE_PG = bool(DATABASE_URL)
 
 if _USE_PG:
-    import psycopg2
-    import psycopg2.extras
+    import psycopg
 else:
     import sqlite3
     _SQLITE_PATH = str(Path(__file__).parent / "sgsl.db")
@@ -28,7 +27,7 @@ else:
 
 def _conn():
     if _USE_PG:
-        return psycopg2.connect(DATABASE_URL)
+        return psycopg.connect(DATABASE_URL)
     conn = sqlite3.connect(_SQLITE_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
