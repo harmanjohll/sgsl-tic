@@ -73,43 +73,54 @@ def _json_out(val):
 # --- Schema ---
 
 def init_db():
-    conn = _conn()
-    if _USE_PG:
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS signs (
-                id SERIAL PRIMARY KEY,
-                label TEXT NOT NULL,
-                landmarks JSONB NOT NULL,
-                features JSONB,
-                contributor TEXT,
-                status TEXT DEFAULT 'pending',
-                verified_by TEXT,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_signs_label ON signs(label)")
-        conn.commit()
-        cur.close()
-    else:
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS signs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                label TEXT NOT NULL,
-                landmarks TEXT NOT NULL,
-                features TEXT,
-                contributor TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_signs_label ON signs(label);
-        """)
-        columns = [row["name"] for row in conn.execute("PRAGMA table_info(signs)").fetchall()]
-        if "status" not in columns:
-            conn.execute("ALTER TABLE signs ADD COLUMN status TEXT DEFAULT 'pending'")
-        if "verified_by" not in columns:
-            conn.execute("ALTER TABLE signs ADD COLUMN verified_by TEXT")
-        conn.commit()
-    conn.close()
+    try:
+        conn = _conn()
+    except Exception as e:
+        print(f"[DB] WARNING: Could not connect to database: {e}")
+        print(f"[DB] _USE_PG={_USE_PG}, DATABASE_URL set={bool(DATABASE_URL)}")
+        return
+    try:
+        if _USE_PG:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS signs (
+                    id SERIAL PRIMARY KEY,
+                    label TEXT NOT NULL,
+                    landmarks JSONB NOT NULL,
+                    features JSONB,
+                    contributor TEXT,
+                    status TEXT DEFAULT 'pending',
+                    verified_by TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_signs_label ON signs(label)")
+            conn.commit()
+            cur.close()
+            print("[DB] PostgreSQL initialized successfully")
+        else:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS signs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    label TEXT NOT NULL,
+                    landmarks TEXT NOT NULL,
+                    features TEXT,
+                    contributor TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_signs_label ON signs(label);
+            """)
+            columns = [row["name"] for row in conn.execute("PRAGMA table_info(signs)").fetchall()]
+            if "status" not in columns:
+                conn.execute("ALTER TABLE signs ADD COLUMN status TEXT DEFAULT 'pending'")
+            if "verified_by" not in columns:
+                conn.execute("ALTER TABLE signs ADD COLUMN verified_by TEXT")
+            conn.commit()
+            print("[DB] SQLite initialized successfully")
+    except Exception as e:
+        print(f"[DB] WARNING: init_db error: {e}")
+    finally:
+        conn.close()
 
 
 # --- CRUD ---

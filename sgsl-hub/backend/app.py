@@ -173,4 +173,9 @@ def serve_index():
 # Train classifier on startup
 @app.on_event("startup")
 def startup():
-    _retrain_classifier()
+    try:
+        _retrain_classifier()
+        print("[STARTUP] Classifier trained successfully")
+    except Exception as e:
+        print(f"[STARTUP] WARNING: Could not train classifier on startup: {e}")
+        print("[STARTUP] The app will still work — classifier will train on first contribution")
