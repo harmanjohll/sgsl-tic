@@ -8,7 +8,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { fetchSigns, fetchSign } from './api.js';
-import { setStatus } from './app.js';
+import { setStatus, viewMode } from './app.js';
+import { playSign as avatarPlay, togglePause as avatarToggle, replay as avatarReplay, setSpeed as avatarSetSpeed } from './avatar.js';
 
 const BONES = [
   [0,1],[1,2],[2,3],[3,4],
@@ -285,6 +286,8 @@ async function playLabel(label) {
     }
 
     if (emptyState) emptyState.classList.add('hidden');
+    const avatarEmpty = document.getElementById('avatar-empty');
+    if (avatarEmpty) avatarEmpty.classList.add('hidden');
     if (bar) bar.classList.remove('hidden');
 
     frameIdx = 0;
@@ -294,9 +297,22 @@ async function playLabel(label) {
     paused = false;
     playing = true;
 
+    // Also play on avatar
+    const prog = document.getElementById('tts-progress');
+    avatarPlay(data.landmarks, speed, (fi, total) => {
+      if (prog && viewMode === 'avatar') prog.style.width = `${(fi / total) * 100}%`;
+      const fiEl = document.getElementById('frame-info');
+      if (fiEl && viewMode === 'avatar') fiEl.textContent = `${fi} / ${total}`;
+    }, () => {
+      if (viewMode === 'avatar') {
+        const pauseBtn = document.getElementById('pause-btn');
+        if (pauseBtn) pauseBtn.textContent = 'Pause';
+        setStatus(statusEl, 'Playback complete.', 'success');
+      }
+    });
+
     const pauseBtn = document.getElementById('pause-btn');
     if (pauseBtn) pauseBtn.textContent = 'Pause';
-    const prog = document.getElementById('tts-progress');
     if (prog) prog.style.width = '0%';
 
     setStatus(statusEl, `Playing "${label}" (${currentSeq.length} frames)`, 'info');
@@ -372,6 +388,7 @@ export function initViewer() {
       document.getElementById('pause-btn').textContent = 'Pause';
       const prog = document.getElementById('tts-progress');
       if (prog) prog.style.width = '0%';
+      avatarReplay();
     }
   });
 
@@ -379,6 +396,7 @@ export function initViewer() {
     if (!playing && !paused) return;
     paused = !paused;
     document.getElementById('pause-btn').textContent = paused ? 'Resume' : 'Pause';
+    avatarToggle();
   });
 
   const slider = document.getElementById('speed-slider');
@@ -386,6 +404,7 @@ export function initViewer() {
   slider?.addEventListener('input', () => {
     speed = parseFloat(slider.value);
     sval.textContent = `${speed}x`;
+    avatarSetSpeed(speed);
   });
 }
 
