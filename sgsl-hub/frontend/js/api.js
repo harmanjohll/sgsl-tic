@@ -6,6 +6,12 @@
 
 const BASE = '';  // same origin
 
+async function safeJSON(res) {
+  const text = await res.text();
+  try { return JSON.parse(text); }
+  catch { return { detail: text || `HTTP ${res.status}` }; }
+}
+
 export async function fetchSigns() {
   const res = await fetch(`${BASE}/api/signs`);
   if (!res.ok) throw new Error('Failed to load sign library');
@@ -24,7 +30,7 @@ export async function contribute(label, landmarks, contributor = null) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ label, landmarks, contributor }),
   });
-  const data = await res.json();
+  const data = await safeJSON(res);
   if (!res.ok) throw new Error(data.detail || 'Contribution failed');
   return data;
 }
@@ -35,7 +41,7 @@ export async function recognize(landmarks) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ landmarks }),
   });
-  const data = await res.json();
+  const data = await safeJSON(res);
   if (!res.ok) throw new Error(data.detail || 'Recognition failed');
   return data;
 }
@@ -46,7 +52,7 @@ export async function login(email) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email }),
   });
-  const data = await res.json();
+  const data = await safeJSON(res);
   if (!res.ok) throw new Error(data.detail || 'Login failed');
   return data;
 }

@@ -12,12 +12,14 @@ const CHARS = {
   rajan: {
     name: 'Rajan', gender: 'male',
     skin: '#8D5524', skinLt: '#A0673B', skinDk: '#6B3F1A',
-    hair: '#1A1A2E', shirt: '#1B4332', shirtLt: '#2D6A4F', eyes: '#1A1A2E',
+    hair: '#1A1A2E', shirt: '#1B4332', shirtLt: '#2D6A4F',
+    iris: '#3E2723', blush: '#C47A4A',
   },
   meiling: {
     name: 'Mei Ling', gender: 'female',
     skin: '#F5D0A9', skinLt: '#FDE8CD', skinDk: '#D4A574',
-    hair: '#1A1A2E', shirt: '#6B21A8', shirtLt: '#9333EA', eyes: '#1A1A2E',
+    hair: '#1A1A2E', shirt: '#6B21A8', shirtLt: '#9333EA',
+    iris: '#2C1810', blush: '#E8A090',
   },
 };
 
@@ -39,81 +41,132 @@ function lmToSVG(lm) {
 // --- SVG Body Parts ---
 function hairSVG(c) {
   if (c.gender === 'male') {
-    return `<path d="M154,60 Q156,26 200,20 Q244,26 246,60
-                     Q246,44 230,34 Q200,26 170,34 Q154,44 154,60"
-                  fill="${c.hair}"/>`;
+    // Short, neat hair — slightly spiky top
+    return `
+      <path d="M153,68 Q154,26 200,18 Q246,26 247,68
+               Q247,44 230,32 Q200,22 170,32 Q153,44 153,68" fill="${c.hair}"/>
+      <path d="M163,36 Q170,20 200,16 Q230,20 237,36 Q228,26 200,22 Q172,26 163,36"
+            fill="${c.hair}" opacity="0.6"/>`;
   }
-  // Female: fuller, longer hair with fringe/bangs, shoulder-length sides
+  // Female: shoulder-length with side part and bangs
   return `
-    <path d="M158,64 Q159,24 200,18 Q241,24 242,64
-             Q242,42 226,32 Q200,22 174,32 Q158,42 158,64" fill="${c.hair}"/>
-    <path d="M158,64 L152,155 Q150,172 160,170 Q168,168 166,152 L168,68" fill="${c.hair}"/>
-    <path d="M242,64 L248,155 Q250,172 240,170 Q232,168 234,152 L232,68" fill="${c.hair}"/>
-    <path d="M170,40 Q178,52 172,64 L164,64 Q168,50 170,40" fill="${c.hair}" opacity="0.7"/>
-    <path d="M230,40 Q222,52 228,64 L236,64 Q232,50 230,40" fill="${c.hair}" opacity="0.7"/>`;
+    <path d="M156,68 Q157,24 200,16 Q243,24 244,68
+             Q244,42 228,30 Q200,20 172,30 Q156,42 156,68" fill="${c.hair}"/>
+    <path d="M156,68 L150,158 Q148,178 160,175 Q170,172 168,155 L170,72" fill="${c.hair}"/>
+    <path d="M244,68 L250,158 Q252,178 240,175 Q230,172 232,155 L230,72" fill="${c.hair}"/>
+    <path d="M168,38 Q176,52 170,68 L162,68 Q166,50 168,38" fill="${c.hair}" opacity="0.6"/>
+    <path d="M232,38 Q224,52 230,68 L238,68 Q234,50 232,38" fill="${c.hair}" opacity="0.6"/>`;
+}
+
+function eyeSVG(c, cx, cy, isLeft) {
+  const f = c.gender === 'female';
+  // Sclera size
+  const sx = f ? 9 : 8;
+  const sy = f ? 8 : 7;
+  // Iris
+  const ir = f ? 4.5 : 4;
+  // Pupil
+  const pr = f ? 2.2 : 2;
+
+  let svg = `
+    <ellipse cx="${cx}" cy="${cy}" rx="${sx}" ry="${sy}" fill="white"/>
+    <ellipse cx="${cx}" cy="${cy}" rx="${sx}" ry="${sy}" fill="none" stroke="${c.skinDk}" stroke-width="0.6" opacity="0.3"/>
+    <circle cx="${cx}" cy="${cy + 0.5}" r="${ir}" fill="${c.iris}"/>
+    <circle cx="${cx}" cy="${cy + 0.5}" r="${pr}" fill="#0D0D0D"/>
+    <circle cx="${cx + 1.5}" cy="${cy - 1}" r="1.8" fill="white" opacity="0.85"/>
+    <circle cx="${cx - 1}" cy="${cy + 2}" r="0.8" fill="white" opacity="0.4"/>`;
+
+  // Eyelashes for female
+  if (f) {
+    const dir = isLeft ? -1 : 1;
+    svg += `
+      <path d="M${cx + dir * sx},${cy - 1} L${cx + dir * (sx + 3)},${cy - 4}"
+            stroke="${c.hair}" stroke-width="1.3" stroke-linecap="round"/>
+      <path d="M${cx + dir * (sx - 1)},${cy - 3} L${cx + dir * (sx + 2)},${cy - 6}"
+            stroke="${c.hair}" stroke-width="1.3" stroke-linecap="round"/>`;
+  }
+
+  return svg;
 }
 
 function bodySVG(c) {
   const f = c.gender === 'female';
 
   // Gender-specific dimensions
-  const headRx = f ? 42 : 46;
-  const headRy = f ? 54 : 50;
-  const eyeRx  = f ? 5 : 4;
-  const eyeRy  = f ? 5.5 : 4.5;
+  const headRx = f ? 44 : 48;
+  const headRy = f ? 52 : 48;
   const earRx  = f ? 6 : 8;
-  const earRy  = f ? 10 : 12;
+  const earRy  = f ? 9 : 11;
   const neckW  = f ? 22 : 30;
   const neckX  = 200 - neckW / 2;
-  const browW  = f ? 1.6 : 2.8;
-  const browL  = f ? 'M177,65 Q184,60 191,65' : 'M174,68 Q184,64 194,68';
-  const browR  = f ? 'M209,65 Q216,60 223,65' : 'M206,68 Q216,64 226,68';
-  const nose   = f ? 'M198,86 Q200,89 202,86' : 'M196,82 Q200,91 204,82';
-  const mouth  = f ? 'M192,96 Q200,102 208,96' : 'M188,97 Q200,104 212,97';
+  const browW  = f ? 1.8 : 2.8;
+  const browL  = f ? 'M173,63 Q182,58 191,63' : 'M171,66 Q182,62 193,66';
+  const browR  = f ? 'M209,63 Q218,58 227,63' : 'M207,66 Q218,62 229,66';
+  const nose   = f ? 'M198,86 Q200,90 202,86' : 'M196,83 Q200,92 204,83';
+  const mouth  = f ? 'M190,98 Q200,106 210,98' : 'M187,99 Q200,107 213,99';
 
-  // Eyelashes for female character
-  const lashes = f ? `
-      <path d="M179,73 L176,70" stroke="${c.hair}" stroke-width="1.2" stroke-linecap="round"/>
-      <path d="M178,75 L174,73.5" stroke="${c.hair}" stroke-width="1.2" stroke-linecap="round"/>
-      <path d="M221,73 L224,70" stroke="${c.hair}" stroke-width="1.2" stroke-linecap="round"/>
-      <path d="M222,75 L226,73.5" stroke="${c.hair}" stroke-width="1.2" stroke-linecap="round"/>` : '';
-
-  // Subtle lip tint for female
+  // Lip tint for female
   const lipFill = f
-    ? `<path d="M194,96 Q200,100 206,96 Q200,103 194,96 Z" fill="${c.skinDk}" opacity="0.2"/>`
+    ? `<path d="M192,98 Q200,104 208,98 Q200,107 192,98 Z" fill="#D4877A" opacity="0.25"/>`
     : '';
+
+  // Ear positions
+  const earLx = 200 - headRx - earRx + 4;
+  const earRx2 = 200 + headRx + earRx - 4;
 
   return `
     <g class="avatar-body">
-      <path d="M128,176 Q128,162 200,155 Q272,162 272,176 L276,340 Q276,358 200,362 Q124,358 124,340 Z"
+      <!-- Shirt body -->
+      <path d="M128,180 Q128,164 200,157 Q272,164 272,180 L276,340 Q276,358 200,362 Q124,358 124,340 Z"
             fill="${c.shirt}"/>
-      <path d="M168,155 Q200,148 232,155 L232,208 Q200,218 168,208 Z"
-            fill="${c.shirtLt}" opacity="0.3"/>
+      <path d="M168,157 Q200,150 232,157 L232,210 Q200,220 168,210 Z"
+            fill="${c.shirtLt}" opacity="0.25"/>
       ${f
-        ? `<path d="M185,158 Q200,172 215,158" stroke="${c.shirtLt}" stroke-width="2" fill="none" opacity="0.5"/>`
-        : `<path d="M180,160 Q200,164 220,160" stroke="${c.shirtLt}" stroke-width="1.5" fill="none" opacity="0.4"/>`
+        ? `<path d="M184,161 Q200,176 216,161" stroke="${c.shirtLt}" stroke-width="2" fill="none" opacity="0.4"/>`
+        : `<path d="M180,163 Q200,167 220,163" stroke="${c.shirtLt}" stroke-width="1.5" fill="none" opacity="0.3"/>`
       }
-      <rect x="${neckX}" y="126" width="${neckW}" height="32" rx="9" fill="${c.skin}"/>
+
+      <!-- Neck -->
+      <rect x="${neckX}" y="126" width="${neckW}" height="34" rx="10" fill="${c.skin}"/>
+      <rect x="${neckX + 2}" y="126" width="${neckW - 4}" height="20" rx="6" fill="${c.skinLt}" opacity="0.15"/>
+
+      <!-- Head -->
       <ellipse cx="200" cy="78" rx="${headRx}" ry="${headRy}" fill="${c.skin}"/>
+      <ellipse cx="200" cy="82" rx="${headRx - 4}" ry="${headRy - 6}" fill="${c.skinLt}" opacity="0.1"/>
+
+      <!-- Ears -->
+      <ellipse cx="${earLx}" cy="80" rx="${earRx}" ry="${earRy}" fill="${c.skin}"/>
+      <ellipse cx="${earLx + 2}" cy="80" rx="${earRx - 2}" ry="${earRy - 3}" fill="${c.skinDk}" opacity="0.15"/>
+      <ellipse cx="${earRx2}" cy="80" rx="${earRx}" ry="${earRy}" fill="${c.skin}"/>
+      <ellipse cx="${earRx2 - 2}" cy="80" rx="${earRx - 2}" ry="${earRy - 3}" fill="${c.skinDk}" opacity="0.15"/>
+
+      <!-- Hair (behind head clipped, in front) -->
       ${hairSVG(c)}
-      <ellipse cx="${200 - headRx - earRx + 3}" cy="80" rx="${earRx}" ry="${earRy}" fill="${c.skin}"/>
-      <ellipse cx="${200 + headRx + earRx - 3}" cy="80" rx="${earRx}" ry="${earRy}" fill="${c.skin}"/>
-      <ellipse cx="184" cy="76" rx="${eyeRx}" ry="${eyeRy}" fill="${c.eyes}"/>
-      <ellipse cx="216" cy="76" rx="${eyeRx}" ry="${eyeRy}" fill="${c.eyes}"/>
-      ${lashes}
-      <circle cx="${f ? 186 : 185.5}" cy="75" r="1.5" fill="white" opacity="0.6"/>
-      <circle cx="${f ? 218 : 217.5}" cy="75" r="1.5" fill="white" opacity="0.6"/>
+
+      <!-- Eyes -->
+      ${eyeSVG(c, 184, 76, true)}
+      ${eyeSVG(c, 216, 76, false)}
+
+      <!-- Eyebrows -->
       <path d="${browL}" stroke="${c.hair}" stroke-width="${browW}" fill="none" stroke-linecap="round"/>
       <path d="${browR}" stroke="${c.hair}" stroke-width="${browW}" fill="none" stroke-linecap="round"/>
-      <path d="${nose}" stroke="${c.skinDk}" stroke-width="1.5" fill="none" opacity="0.4"/>
+
+      <!-- Cheek blush -->
+      <circle cx="170" cy="90" r="8" fill="${c.blush}" opacity="0.2"/>
+      <circle cx="230" cy="90" r="8" fill="${c.blush}" opacity="0.2"/>
+
+      <!-- Nose -->
+      <path d="${nose}" stroke="${c.skinDk}" stroke-width="1.5" fill="none" opacity="0.35"/>
+
+      <!-- Mouth -->
       ${lipFill}
-      <path d="${mouth}" stroke="${c.skinDk}" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.5"/>
+      <path d="${mouth}" stroke="${c.skinDk}" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.45"/>
     </g>`;
 }
 
 function armSVG(c, side, wristPt) {
   const sx = side === 'L' ? 134 : 266;
-  const sy = 178;
+  const sy = 182;
   if (!wristPt) {
     const rx = side === 'L' ? 95 : 305;
     const ey = 260, ry = 330;
@@ -138,8 +191,8 @@ function handSVG(c, landmarks) {
   }
   for (let i = 0; i < 21; i++) {
     const r = TIPS.includes(i) ? 7 : (i === 0 ? 8 : 4.5);
-    const f = TIPS.includes(i) ? c.skinLt : c.skin;
-    s += `<circle cx="${pts[i].x}" cy="${pts[i].y}" r="${r}" fill="${f}"
+    const fl = TIPS.includes(i) ? c.skinLt : c.skin;
+    s += `<circle cx="${pts[i].x}" cy="${pts[i].y}" r="${r}" fill="${fl}"
           stroke="${c.skinDk}" stroke-width="0.8"/>`;
   }
   return s;
