@@ -7,9 +7,9 @@ falls back to SQLite for local development.
 
 import json
 import os
+import re
 import socket
 from pathlib import Path
-from urllib.parse import urlparse
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 # psycopg requires postgresql:// scheme
@@ -26,32 +26,39 @@ else:
 
 
 # --- IPv4 fix for Render + Supabase ---
-# Render does not support IPv6 outbound. Supabase hostnames often resolve
-# to IPv6 first, causing "Network is unreachable". We force IPv4 resolution
-# by resolving the hostname ourselves and passing hostaddr to libpq.
+# Render cannot reach IPv6 addresses. Supabase hostnames often resolve to
+# IPv6 first. We extract the hostname with a regex (NOT urlparse, which
+# crashes on Python 3.14 with some URL formats) and resolve it to IPv4.
 
-def _pg_url_ipv4(url):
-    """Add hostaddr parameter to force IPv4 connection."""
-    parsed = urlparse(url)
-    if not parsed.hostname:
-        return url
+def _extract_pg_host(url):
+    """Extract hostname from a PostgreSQL connection URL using regex."""
+    m = re.search(r'@([a-zA-Z0-9._-]+)', url)
+    return m.group(1) if m else None
+
+
+def _resolve_ipv4(hostname):
+    """Resolve a hostname to an IPv4 address. Returns None on failure."""
     try:
-        infos = socket.getaddrinfo(parsed.hostname, parsed.port, socket.AF_INET, socket.SOCK_STREAM)
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM)
         if infos:
             ipv4 = infos[0][4][0]
-            sep = '&' if '?' in url else '?'
-            print(f"[DB] Resolved {parsed.hostname} -> {ipv4} (IPv4)")
-            return f"{url}{sep}hostaddr={ipv4}"
+            print(f"[DB] Resolved {hostname} -> {ipv4} (IPv4)")
+            return ipv4
     except socket.gaierror as e:
-        print(f"[DB] WARNING: IPv4 resolution failed for {parsed.hostname}: {e}")
-    return url
+        print(f"[DB] WARNING: IPv4 resolution failed for {hostname}: {e}")
+    return None
 
 
 # --- Connection helpers ---
 
 def _conn():
     if _USE_PG:
-        return psycopg.connect(_pg_url_ipv4(DATABASE_URL))
+        # Force IPv4 to avoid Render IPv6 issues
+        host = _extract_pg_host(DATABASE_URL)
+        ipv4 = _resolve_ipv4(host) if host else None
+        if ipv4:
+            return psycopg.connect(DATABASE_URL, hostaddr=ipv4)
+        return psycopg.connect(DATABASE_URL)
     conn = sqlite3.connect(_SQLITE_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
