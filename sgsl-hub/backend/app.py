@@ -7,13 +7,14 @@ for sign language contribution, recognition, and library browsing.
 Run: uvicorn app:app --reload --port 8000
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from pathlib import Path
 import os
 import sys
+import traceback
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -30,6 +31,17 @@ from ml.recognizer import (
 app = FastAPI(title="SgSL Hub", version="2.0")
 
 FRONTEND = Path(__file__).parent.parent / "frontend"
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Return JSON for all unhandled errors (DB connection failures, etc.)."""
+    print(f"[ERROR] {request.method} {request.url.path}: {exc}")
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Server error: {type(exc).__name__}: {exc}"},
+    )
 
 # Allowed email domains for contributors (comma-separated env var)
 ALLOWED_DOMAINS = [
