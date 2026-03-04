@@ -80,7 +80,7 @@ export class HolisticTracker {
 
     // MediaPipe Holistic — two hands + face + pose in one model
     this.holistic = new window.Holistic({
-      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${f}`,
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/${f}`,
     });
     this.holistic.setOptions({
       modelComplexity: 1,
