@@ -181,11 +181,80 @@ def _is_holistic_frame(frame):
     return isinstance(frame, dict) and ('leftHand' in frame or 'rightHand' in frame)
 
 
+SPATIAL_DIM = 9  # spatial relationship features
+
+
+def extract_spatial_features(frame):
+    """Extract 9-D spatial relationship features.
+
+    Encodes WHERE hands are relative to the face (and each other):
+      1-3: Right wrist position relative to nose (x, y, z) — face-scale normalized
+      4-6: Left wrist position relative to nose (x, y, z)
+      7-9: Hand-to-hand vector (right wrist to left wrist, x, y, z)
+
+    All values are normalized by inter-eye distance for scale invariance.
+    This captures the difference between e.g. "thanks" (chin→down) and
+    "hello" (same hand shape, different location).
+    """
+    face_raw = frame.get('face')
+    right_raw = frame.get('rightHand')
+    left_raw = frame.get('leftHand')
+
+    # We need at least a face reference and one hand
+    if not face_raw or len(face_raw) < 32:
+        return [0.0] * SPATIAL_DIM
+
+    face_pts = np.array(face_raw, dtype=np.float64)
+    # Nose tip (index 18 in our subset) as origin
+    nose = face_pts[_FACE_NOSE[0]]
+    # Inter-eye distance as scale (indices 10, 14 = outer eye corners)
+    left_eye = face_pts[_FACE_LEFT_EYE[0]]
+    right_eye = face_pts[_FACE_RIGHT_EYE[0]]
+    eye_dist = np.linalg.norm(left_eye - right_eye)
+    if eye_dist < 1e-8:
+        return [0.0] * SPATIAL_DIM
+
+    feats = []
+
+    # Right wrist relative to nose
+    if right_raw and len(right_raw) >= 21:
+        rw = np.array(right_raw[0], dtype=np.float64)  # wrist = landmark 0
+        rel = (rw - nose) / eye_dist
+        feats.extend(rel[:3].tolist())
+    else:
+        feats.extend([0.0, 0.0, 0.0])
+
+    # Left wrist relative to nose
+    if left_raw and len(left_raw) >= 21:
+        lw = np.array(left_raw[0], dtype=np.float64)
+        rel = (lw - nose) / eye_dist
+        feats.extend(rel[:3].tolist())
+    else:
+        feats.extend([0.0, 0.0, 0.0])
+
+    # Hand-to-hand vector
+    if right_raw and len(right_raw) >= 21 and left_raw and len(left_raw) >= 21:
+        rw = np.array(right_raw[0], dtype=np.float64)
+        lw = np.array(left_raw[0], dtype=np.float64)
+        hh = (lw - rw) / eye_dist
+        feats.extend(hh[:3].tolist())
+    else:
+        feats.extend([0.0, 0.0, 0.0])
+
+    return feats  # 9-D
+
+
 def _extract_frame_combined(frame):
     """Extract features from a single frame (legacy or holistic).
 
     Returns a feature vector of consistent dimensionality for the sequence,
     or None if no valid hand data.
+
+    Feature layout (139-D for holistic):
+      [0-58]   Right hand shape (59-D, wrist-normalized)
+      [59-117] Left hand shape (59-D, wrist-normalized)
+      [118-129] Face expression (12-D)
+      [130-138] Spatial relationships (9-D) — hand-to-face, hand-to-hand
     """
     if _is_legacy_frame(frame):
         # Legacy single-hand: return 59-D (padded to match holistic format)
@@ -193,8 +262,8 @@ def _extract_frame_combined(frame):
         if pts is None:
             return None
         hand_feats = extract_hand_features(pts)
-        # Pad: 59 (right hand) + 59 zeros (no left hand) + 12 zeros (no face)
-        return hand_feats + [0.0] * 59 + [0.0] * 12
+        # Pad: 59 (right hand) + 59 zeros (no left) + 12 zeros (face) + 9 zeros (spatial)
+        return hand_feats + [0.0] * 59 + [0.0] * 12 + [0.0] * SPATIAL_DIM
 
     if _is_holistic_frame(frame):
         feats = []
@@ -220,11 +289,14 @@ def _extract_frame_combined(frame):
         else:
             feats.extend([0.0] * 12)
 
+        # Spatial relationship features (hand-to-face, hand-to-hand)
+        feats.extend(extract_spatial_features(frame))
+
         # At least one hand must be present
         if right is None and left is None:
             return None
 
-        return feats  # 130-D
+        return feats  # 139-D
 
     return None
 

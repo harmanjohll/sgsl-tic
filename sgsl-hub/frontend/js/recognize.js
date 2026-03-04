@@ -12,6 +12,11 @@ import { setStatus, toast } from './app.js';
 let tracker = null;
 let capturing = false;
 let frames = [];
+let autoStopTimeout = null;
+
+const CAPTURE_DURATION = 4000;  // auto-stop after 4 seconds
+const TRIM_START_MS = 500;      // trim first 0.5s
+const TRIM_END_MS = 400;        // trim last 0.4s
 
 export function initRecognize() {
   const enableBtn = document.getElementById('stt-enable-camera');
@@ -66,33 +71,47 @@ export function initRecognize() {
     stopBtn.disabled = false;
     resultsPanel.classList.add('hidden');
     document.getElementById('stt-rec-badge').classList.remove('hidden');
-    setStatus(statusEl, 'Capturing... Perform the sign now.', 'info');
+    setStatus(statusEl, `Capturing for ${CAPTURE_DURATION / 1000}s... Perform the sign now.`, 'info');
+
+    // Auto-stop after CAPTURE_DURATION
+    autoStopTimeout = setTimeout(() => finishCapture(statusEl, startBtn, stopBtn, resultsPanel), CAPTURE_DURATION);
   });
 
-  stopBtn.addEventListener('click', async () => {
-    capturing = false;
-    stopBtn.disabled = true;
-    document.getElementById('stt-rec-badge').classList.add('hidden');
+  stopBtn.addEventListener('click', () => {
+    if (autoStopTimeout) { clearTimeout(autoStopTimeout); autoStopTimeout = null; }
+    finishCapture(statusEl, startBtn, stopBtn, resultsPanel);
+  });
+}
 
-    if (frames.length < 5) {
-      setStatus(statusEl, 'Capture too short. Try again.', 'error');
-      startBtn.disabled = false;
-      return;
-    }
+async function finishCapture(statusEl, startBtn, stopBtn, resultsPanel) {
+  capturing = false;
+  stopBtn.disabled = true;
+  document.getElementById('stt-rec-badge').classList.add('hidden');
 
-    setStatus(statusEl, `Recognizing (${frames.length} frames)...`, 'loading');
+  // Trim start and end frames to remove button-click artefacts
+  const fps = 30;
+  const trimStart = Math.round((TRIM_START_MS / 1000) * fps);
+  const trimEnd = Math.round((TRIM_END_MS / 1000) * fps);
+  const trimmed = frames.slice(trimStart, frames.length - trimEnd);
 
-    try {
-      const result = await recognize(frames);
-      displayResults(result, resultsPanel);
-      setStatus(statusEl, `Recognition complete (${result.method}).`, 'success');
-    } catch (err) {
-      setStatus(statusEl, err.message, 'error');
-      toast('Recognition failed', 'error');
-    }
-
+  if (trimmed.length < 5) {
+    setStatus(statusEl, 'Capture too short after trimming. Try again — hold the sign longer.', 'error');
     startBtn.disabled = false;
-  });
+    return;
+  }
+
+  setStatus(statusEl, `Recognizing (${trimmed.length} frames, trimmed from ${frames.length})...`, 'loading');
+
+  try {
+    const result = await recognize(trimmed);
+    displayResults(result, resultsPanel);
+    setStatus(statusEl, `Recognition complete (${result.method}).`, 'success');
+  } catch (err) {
+    setStatus(statusEl, err.message, 'error');
+    toast('Recognition failed', 'error');
+  }
+
+  startBtn.disabled = false;
 }
 
 function displayResults(result, panel) {
