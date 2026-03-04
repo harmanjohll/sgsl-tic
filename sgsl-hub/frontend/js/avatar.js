@@ -55,9 +55,39 @@ const FINGERS = [
 ];
 
 // --- Coordinate mapping ---
-// Shifted upward so hands appear at chest/signing height, not belly level
-function lmToSVG(lm) {
+// Avatar reference points (SVG coords)
+const AVATAR_NOSE = { x: 200, y: 116 };
+const AVATAR_LEFT_EYE = { x: 180, y: 84 };
+const AVATAR_RIGHT_EYE = { x: 220, y: 84 };
+const AVATAR_EYE_DIST = 40; // inter-eye distance in SVG px
+
+// Face-relative mapping: anchors hand position to avatar's face
+// Uses face nose as origin, inter-eye distance as scale unit
+function lmToSVG(lm, faceAnchor) {
+  if (faceAnchor) {
+    // Face-relative: map hand position proportionally
+    const scale = AVATAR_EYE_DIST / (faceAnchor.eyeDist || 0.08);
+    return {
+      x: AVATAR_NOSE.x + ((1 - lm[0]) - (1 - faceAnchor.nose[0])) * scale,
+      y: AVATAR_NOSE.y + (lm[1] - faceAnchor.nose[1]) * scale,
+    };
+  }
+  // Fallback: absolute mapping (legacy)
   return { x: 60 + (1 - lm[0]) * 280, y: 100 + lm[1] * 280 };
+}
+
+// Extract face anchor from holistic face data (32-point subset)
+// Indices: 10=left eye outer, 14=right eye outer, 18=nose tip
+function extractFaceAnchor(faceData) {
+  if (!faceData || faceData.length < 32) return null;
+  const nose = faceData[18]; // _FACE_NOSE[0]
+  const leftEye = faceData[10]; // _FACE_LEFT_EYE[0]
+  const rightEye = faceData[14]; // _FACE_RIGHT_EYE[0]
+  const dx = leftEye[0] - rightEye[0];
+  const dy = leftEye[1] - rightEye[1];
+  const eyeDist = Math.sqrt(dx * dx + dy * dy);
+  if (eyeDist < 0.01) return null;
+  return { nose, eyeDist };
 }
 
 // --- SVG Definitions (simplified) ---
@@ -177,16 +207,45 @@ function shirtSVG(c) {
 
 function neckSVG(c) {
   const isFemale = c.gender === 'female';
-  const nw = isFemale ? 28 : 34;
-  const nx = 200 - nw / 2;
+  // Tapered neck: narrower at jaw, wider at shoulders, smooth curves
+  const topW = isFemale ? 24 : 30;   // width at jaw
+  const botW = isFemale ? 36 : 44;   // width at base (into shirt)
+  const topY = 145;
+  const botY = 178;
+  const cx = 200;
+
   return `
     <g class="neck">
-      <rect x="${nx}" y="142" width="${nw}" height="38" rx="13" fill="${c.skin}"/>
-      <!-- Subtle shadow under chin -->
-      <ellipse cx="200" cy="146" rx="${nw / 2 - 2}" ry="4" fill="${c.skinDk}" opacity="0.1"/>
+      <!-- Smooth tapered neck shape -->
+      <path d="M${cx - topW / 2},${topY}
+               Q${cx - topW / 2 - 2},${(topY + botY) / 2}
+                ${cx - botW / 2},${botY}
+               L${cx + botW / 2},${botY}
+               Q${cx + topW / 2 + 2},${(topY + botY) / 2}
+                ${cx + topW / 2},${topY} Z"
+            fill="${c.skin}"/>
+      <!-- Chin shadow (soft gradient feel) -->
+      <ellipse cx="${cx}" cy="${topY + 3}" rx="${topW / 2 - 1}" ry="3.5"
+               fill="${c.skinDk}" opacity="0.08"/>
+      <!-- Side shadows for roundness -->
+      <path d="M${cx - topW / 2},${topY}
+               Q${cx - topW / 2 - 2},${(topY + botY) / 2}
+                ${cx - botW / 2},${botY}
+               L${cx - botW / 2 + 6},${botY}
+               Q${cx - topW / 2 + 4},${(topY + botY) / 2}
+                ${cx - topW / 2 + 3},${topY} Z"
+            fill="${c.skinDk}" opacity="0.05"/>
+      <path d="M${cx + topW / 2},${topY}
+               Q${cx + topW / 2 + 2},${(topY + botY) / 2}
+                ${cx + botW / 2},${botY}
+               L${cx + botW / 2 - 6},${botY}
+               Q${cx + topW / 2 - 4},${(topY + botY) / 2}
+                ${cx + topW / 2 - 3},${topY} Z"
+            fill="${c.skinDk}" opacity="0.05"/>
       ${!isFemale ? `
-        <!-- Subtle adam's apple hint for male -->
-        <ellipse cx="200" cy="162" rx="3" ry="4" fill="${c.skinDk}" opacity="0.04"/>
+        <!-- Subtle adam's apple for male -->
+        <ellipse cx="${cx}" cy="163" rx="2.5" ry="3.5"
+                 fill="${c.skinDk}" opacity="0.035"/>
       ` : ''}
     </g>`;
 }
@@ -393,7 +452,42 @@ function mouthSVG(c) {
     </g>`;
 }
 
-// --- Arms: natural two-segment (upper arm + forearm) ---
+// --- Arms: organic contour-based limbs (no wooden dowels) ---
+// Draws a filled shape with natural tapering from shoulder to wrist.
+function _armContour(sx, sy, ex, ey, wTop, wBot, side, c) {
+  // Perpendicular offsets for the two edges of the arm
+  const dx = ex - sx, dy = ey - sy;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  const px = -dy / len, py = dx / len;
+  const sDir = side === 'L' ? -1 : 1;
+
+  // Outer edge (away from body) has a slight muscle bulge
+  const mx = (sx + ex) / 2 + px * sDir * 4;
+  const my = (sy + ey) / 2 + py * sDir * 4;
+
+  // Four corners of the tapered arm shape
+  const s1x = sx + px * wTop / 2, s1y = sy + py * wTop / 2;
+  const s2x = sx - px * wTop / 2, s2y = sy - py * wTop / 2;
+  const e1x = ex + px * wBot / 2, e1y = ey + py * wBot / 2;
+  const e2x = ex - px * wBot / 2, e2y = ey - py * wBot / 2;
+
+  // Outer bulge control points
+  const m1x = mx + px * (wTop + wBot) / 4, m1y = my + py * (wTop + wBot) / 4;
+  const m2x = mx - px * (wTop + wBot) / 4, m2y = my - py * (wTop + wBot) / 4;
+
+  return `
+    <path d="M${s1x.toFixed(1)},${s1y.toFixed(1)}
+             Q${m1x.toFixed(1)},${m1y.toFixed(1)} ${e1x.toFixed(1)},${e1y.toFixed(1)}
+             L${e2x.toFixed(1)},${e2y.toFixed(1)}
+             Q${m2x.toFixed(1)},${m2y.toFixed(1)} ${s2x.toFixed(1)},${s2y.toFixed(1)} Z"
+          fill="${c.skin}"/>
+    <path d="M${s1x.toFixed(1)},${s1y.toFixed(1)}
+             Q${m1x.toFixed(1)},${m1y.toFixed(1)} ${e1x.toFixed(1)},${e1y.toFixed(1)}
+             L${e2x.toFixed(1)},${e2y.toFixed(1)}
+             Q${m2x.toFixed(1)},${m2y.toFixed(1)} ${s2x.toFixed(1)},${s2y.toFixed(1)} Z"
+          fill="${c.skinDk}" opacity="0.06"/>`;
+}
+
 function armSVG(c, side, wristPt) {
   const sx = side === 'L' ? 115 : 285;
   const sy = 244;
@@ -405,17 +499,10 @@ function armSVG(c, side, wristPt) {
     const handX = side === 'L' ? 168 : 232;
     const handY = 305;
 
-    return `
-      <g class="arm-${side}">
-        <path d="M${sx},${sy} Q${sx},${(sy + elbowY) / 2} ${elbowX},${elbowY}"
-              stroke="${c.skin}" stroke-width="22" fill="none" stroke-linecap="round"/>
-        <path d="M${sx},${sy} Q${sx},${(sy + elbowY) / 2} ${elbowX},${elbowY}"
-              stroke="${c.skinDk}" stroke-width="22" fill="none" stroke-linecap="round" opacity="0.06"/>
-        <path d="M${elbowX},${elbowY} Q${(elbowX + handX) / 2},${(elbowY + handY) / 2 + 2} ${handX},${handY}"
-              stroke="${c.skin}" stroke-width="18" fill="none" stroke-linecap="round"/>
-        <path d="M${elbowX},${elbowY} Q${(elbowX + handX) / 2},${(elbowY + handY) / 2 + 2} ${handX},${handY}"
-              stroke="${c.skinDk}" stroke-width="18" fill="none" stroke-linecap="round" opacity="0.04"/>
-      </g>`;
+    return `<g class="arm-${side}">
+      ${_armContour(sx, sy, elbowX, elbowY, 24, 20, side, c)}
+      ${_armContour(elbowX, elbowY, handX, handY, 20, 14, side, c)}
+    </g>`;
   }
 
   // Animated: natural elbow calculation
@@ -424,17 +511,10 @@ function armSVG(c, side, wristPt) {
   const elbowX = sx + (wristPt.x - sx) * elbowT + elbowBias;
   const elbowY = Math.max(sy + 10, sy + (wristPt.y - sy) * elbowT);
 
-  return `
-    <g class="arm-${side}">
-      <path d="M${sx},${sy} Q${sx + sDir * 2},${(sy + elbowY) / 2} ${elbowX},${elbowY}"
-            stroke="${c.skin}" stroke-width="22" fill="none" stroke-linecap="round"/>
-      <path d="M${sx},${sy} Q${sx + sDir * 2},${(sy + elbowY) / 2} ${elbowX},${elbowY}"
-            stroke="${c.skinDk}" stroke-width="22" fill="none" stroke-linecap="round" opacity="0.06"/>
-      <path d="M${elbowX},${elbowY} Q${(elbowX + wristPt.x) / 2 - elbowBias * 0.3},${(elbowY + wristPt.y) / 2} ${wristPt.x},${wristPt.y}"
-            stroke="${c.skin}" stroke-width="18" fill="none" stroke-linecap="round"/>
-      <path d="M${elbowX},${elbowY} Q${(elbowX + wristPt.x) / 2 - elbowBias * 0.3},${(elbowY + wristPt.y) / 2} ${wristPt.x},${wristPt.y}"
-            stroke="${c.skinDk}" stroke-width="18" fill="none" stroke-linecap="round" opacity="0.04"/>
-    </g>`;
+  return `<g class="arm-${side}">
+    ${_armContour(sx, sy, elbowX, elbowY, 24, 20, side, c)}
+    ${_armContour(elbowX, elbowY, wristPt.x, wristPt.y, 20, 14, side, c)}
+  </g>`;
 }
 
 // --- Idle hands: relaxed, fingers down ---
@@ -504,9 +584,9 @@ function applyFingerConstraints(landmarks) {
 
 // --- Animated hand: clearly defined fingers with outlines ---
 // Each finger is drawn as a distinct, outlined shape so sign hand shapes are readable
-function handSVG(c, landmarks) {
+function handSVG(c, landmarks, faceAnchor) {
   if (!landmarks || landmarks.length < 21) return '';
-  const pts = landmarks.map(lm => lmToSVG(lm));
+  const pts = landmarks.map(lm => lmToSVG(lm, faceAnchor));
   let s = '<g class="signing-hand" filter="url(#hand-shadow)">';
 
   // Palm — filled shape with outline
@@ -720,25 +800,26 @@ function render(frame) {
     }
   }
 
-  const leftWrist = leftHand ? lmToSVG(leftHand[0]) : null;
-  const rightWrist = rightHand ? lmToSVG(rightHand[0]) : null;
+  // Compute face anchor for proportional mapping
+  const faceAnchor = extractFaceAnchor(faceData);
+
+  const leftWrist = leftHand ? lmToSVG(leftHand[0], faceAnchor) : null;
+  const rightWrist = rightHand ? lmToSVG(rightHand[0], faceAnchor) : null;
 
   // Build arm + hand SVG
   let armHandSVG = '';
-  // Left arm: connected to left hand if available
   armHandSVG += armSVG(c, 'L', leftWrist);
-  // Right arm: connected to right hand if available
   armHandSVG += armSVG(c, 'R', rightWrist);
 
-  // Render hands
+  // Render hands with face-relative positioning
   if (leftHand) {
-    armHandSVG += handSVG(c, leftHand);
+    armHandSVG += handSVG(c, leftHand, faceAnchor);
   } else if (!rightHand) {
     armHandSVG += idleHandSVG(c, 'L');
   }
 
   if (rightHand) {
-    armHandSVG += handSVG(c, rightHand);
+    armHandSVG += handSVG(c, rightHand, faceAnchor);
   } else if (!leftHand) {
     armHandSVG += idleHandSVG(c, 'R');
   }
