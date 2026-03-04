@@ -159,10 +159,11 @@ function shirtSVG(c) {
       <path d="M284,200 L270,342 L245,342 L262,200 Z" fill="url(#shirt-side-r)" opacity="0.4"/>
       <path d="M162,220 Q165,270 160,330" stroke="${c.shirtDk}" stroke-width="0.7" fill="none" opacity="0.08"/>
       <path d="M238,220 Q235,270 240,330" stroke="${c.shirtDk}" stroke-width="0.7" fill="none" opacity="0.08"/>
-      <!-- Collar -->
-      <path d="M176,174 L183,198 L200,180 Z" fill="${c.shirtLt}"/>
-      <path d="M224,174 L217,198 L200,180 Z" fill="${c.shirtLt}"/>
-      <line x1="200" y1="180" x2="200" y2="260" stroke="${c.shirtDk}" stroke-width="1" opacity="0.1"/>
+      <!-- Neckline — clear round collar with visible edge -->
+      <path d="M174,176 Q200,192 226,176" fill="none" stroke="${c.shirtDk}" stroke-width="2" opacity="0.3"/>
+      <path d="M176,174 L186,196 L200,184 Z" fill="${c.shirtLt}"/>
+      <path d="M224,174 L214,196 L200,184 Z" fill="${c.shirtLt}"/>
+      <line x1="200" y1="184" x2="200" y2="260" stroke="${c.shirtDk}" stroke-width="1" opacity="0.1"/>
       ${[204, 226, 248].map(y => `
         <circle cx="200" cy="${y}" r="2.8" fill="${c.shirtLt}" stroke="${c.shirtDk}" stroke-width="0.5" opacity="0.5"/>
       `).join('')}
@@ -245,22 +246,17 @@ function earsSVG(c) {
 // --- Hair ---
 function hairBackSVG(c) {
   if (c.gender !== 'female') return '';
-  // Back hair sits behind shoulders — stops at shoulder line (~y=185)
-  // No strands hanging below chin to avoid beard effect
+  // Short bob — only behind the head, stops well above chin
   return `
     <g class="hair-back">
-      <path d="M134,52
-               C134,14 166,-8 200,-8
-               C234,-8 266,14 266,52
-               L268,120 L264,155
-               Q258,175 240,182
-               Q220,188 200,188
-               Q180,188 160,182
-               Q142,175 136,155
-               L132,120 Z"
+      <path d="M138,52
+               C138,14 168,-8 200,-8
+               C232,-8 262,14 262,52
+               L264,90 L260,120
+               Q250,140 200,142
+               Q150,140 140,120
+               L136,90 Z"
             fill="${c.hair}"/>
-      <path d="M145,120 Q143,145 148,170" stroke="${c.hairHi}" stroke-width="0.6" fill="none" opacity="0.05"/>
-      <path d="M255,120 Q257,145 252,170" stroke="${c.hairHi}" stroke-width="0.6" fill="none" opacity="0.05"/>
     </g>`;
 }
 
@@ -268,22 +264,14 @@ function hairSVG(c) {
   if (c.gender === 'female') {
     return `
       <g class="hair">
-        <!-- Top of head -->
+        <!-- Top of head — simple volume -->
         <path d="M146,52
                  C148,14 174,-6 200,-8
                  C226,-6 252,14 254,52
                  Q252,28 232,14 Q216,2 200,0
                  Q184,2 168,14 Q148,28 146,52 Z"
               fill="${c.hair}"/>
-        <!-- Side curtains — stop at cheekbone level, well above chin -->
-        <path d="M146,52 C144,66 142,78 141,90 Q140,96 142,102
-                 L149,99 Q150,92 150,84 C150,74 151,64 150,52 Z"
-              fill="${c.hair}"/>
-        <path d="M254,52 C256,66 258,78 259,90 Q260,96 258,102
-                 L251,99 Q250,92 250,84 C250,74 249,64 250,52 Z"
-              fill="${c.hair}"/>
-        <!-- NO loose strands hanging down — clean break at ear level -->
-        <!-- Soft swept bangs -->
+        <!-- Soft swept bangs only — no side hair hanging down -->
         <path d="M156,44 Q168,22 188,14 Q178,32 170,48 Z" fill="${c.hair}"/>
         <path d="M168,40 Q182,18 202,10 Q190,28 184,44 Z" fill="${c.hair}"/>
         <path d="M182,42 Q196,22 216,16 Q204,34 196,48 Z" fill="${c.hair}"/>
