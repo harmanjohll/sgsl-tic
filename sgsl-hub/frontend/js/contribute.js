@@ -2,10 +2,11 @@
    SgSL Hub — Contribute Module
    ============================================================
    Handles the recording flow: camera enable, countdown,
-   landmark capture, and upload to the backend.
+   holistic landmark capture (two hands + face + pose),
+   and upload to the backend.
    ============================================================ */
 
-import { HandTracker } from './camera.js';
+import { HolisticTracker } from './camera.js';
 import { contribute } from './api.js';
 import { setStatus, toast } from './app.js';
 import { getEmail } from './auth.js';
@@ -30,31 +31,30 @@ export function initContribute() {
       enableBtn.disabled = true;
       enableBtn.textContent = 'Starting camera...';
 
-      tracker = new HandTracker(
+      tracker = new HolisticTracker(
         document.getElementById('contribute-video'),
         document.getElementById('contribute-canvas'),
         {
-          onResults: (pts) => {
-            if (recording) frames.push(pts);
+          onResults: (frame) => {
+            if (recording) frames.push(frame);
           },
-          onHandDetected: () => {
+          onTrackingDetected: () => {
             handStatus.classList.add('detected');
-            handStatus.querySelector('span:last-child').textContent = 'Hand detected';
+            handStatus.querySelector('span:last-child').textContent = 'Tracking active';
             recordBtn.disabled = false;
           },
-          onHandLost: () => {
+          onTrackingLost: () => {
             handStatus.classList.remove('detected');
-            handStatus.querySelector('span:last-child').textContent = 'Waiting for hand...';
+            handStatus.querySelector('span:last-child').textContent = 'Waiting for hands...';
           },
         }
       );
 
       await tracker.start();
 
-      // Camera is live — show video area
       prompt.classList.add('hidden');
       videoArea.classList.remove('hidden');
-      setStatus(statusEl, 'Camera ready. Show your hand, then click Record.', 'info');
+      setStatus(statusEl, 'Camera ready. Show your hands, then click Record.', 'info');
     } catch (err) {
       enableBtn.disabled = false;
       enableBtn.textContent = 'Enable Camera';

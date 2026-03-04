@@ -5,9 +5,15 @@ Two-stage recognizer:
 1. DTW (Dynamic Time Warping) — works from the very first sample
 2. k-NN classifier on resampled feature vectors — improves with more data
 
-Feature vector per frame (59-D):
-  - 48 values: 16 bone direction unit vectors (x, y, z)
-  - 11 values: pairwise fingertip distances + palm reference distances
+Supports both legacy single-hand format and new holistic format:
+  Legacy: [[x,y,z], ...21 landmarks...]  (per frame)
+  Holistic: { leftHand: [...], rightHand: [...], face: [...], pose: [...] }
+
+Feature vector per frame:
+  - Per hand (59-D each): 16 bone direction unit vectors (48-D) + fingertip distances (11-D)
+  - Face (12-D): key distance ratios for brow raise, mouth shape, eye wideness
+  - Total: up to 130-D when both hands + face present
+  - Gracefully degrades: single hand = 59-D, no face = skip face features
 """
 
 import numpy as np
@@ -26,11 +32,28 @@ BONES = [
 FINGERTIPS = [4, 8, 12, 16, 20]
 RESAMPLE_LEN = 32
 
+# Key face landmark indices (must match camera.js FACE_KEY_INDICES)
+# 10 brow + 8 eye + 3 nose + 8 mouth + 3 jaw = 32 points
+# Index positions within the subset array:
+_FACE_LEFT_BROW = list(range(0, 5))
+_FACE_RIGHT_BROW = list(range(5, 10))
+_FACE_LEFT_EYE = list(range(10, 14))   # corners + top/bottom
+_FACE_RIGHT_EYE = list(range(14, 18))
+_FACE_NOSE = list(range(18, 21))
+_FACE_MOUTH = list(range(21, 29))      # outer ring
+_FACE_JAW = list(range(29, 32))
 
-def normalize_frame(landmarks):
-    """Normalize a single 21-landmark frame: wrist-relative, scale-invariant."""
+
+# ---- Frame normalization ----
+
+def normalize_hand(landmarks):
+    """Normalize a single 21-landmark hand: wrist-relative, scale-invariant."""
+    if landmarks is None:
+        return None
     pts = np.array(landmarks, dtype=np.float64)
     if pts.shape[0] < 21:
+        return None
+    if pts.ndim == 1:
         return None
     if pts.shape[1] == 2:
         pts = np.column_stack([pts, np.zeros(pts.shape[0])])
@@ -43,8 +66,8 @@ def normalize_frame(landmarks):
     return pts
 
 
-def extract_frame_features(pts):
-    """Extract 59-D feature vector from normalized 21 landmarks."""
+def extract_hand_features(pts):
+    """Extract 59-D feature vector from normalized 21 hand landmarks."""
     feats = []
     for a, b in BONES:
         d = pts[b] - pts[a]
@@ -60,15 +83,176 @@ def extract_frame_features(pts):
     return feats
 
 
+def extract_face_features(face_pts):
+    """Extract 12-D face feature vector from the key face landmark subset.
+
+    Features encode relative proportions (scale-invariant):
+      - Left/right brow raise (2): avg vertical position of brow relative to eye
+      - Left/right eye openness (2): top-bottom distance / horizontal width
+      - Mouth width (1): horizontal extent / face width
+      - Mouth height (1): vertical extent / face width
+      - Mouth aspect ratio (1): width / height
+      - Lip separation (1): inner mouth opening
+      - Jaw drop (1): chin distance from nose
+      - Head tilt (1): angle of eye line
+      - Head turn (1): nose offset from midline
+      - Brow furrow (1): distance between inner brow points
+    """
+    if face_pts is None:
+        return None
+    pts = np.array(face_pts, dtype=np.float64)
+    if pts.shape[0] < 32:
+        return None
+    if pts.shape[1] == 2:
+        pts = np.column_stack([pts, np.zeros(pts.shape[0])])
+
+    # Normalize: center on nose tip, scale by inter-eye distance
+    nose = pts[_FACE_NOSE[0]]  # nose tip
+    left_eye_outer = pts[_FACE_LEFT_EYE[0]]
+    right_eye_outer = pts[_FACE_RIGHT_EYE[0]]
+    face_width = np.linalg.norm(left_eye_outer - right_eye_outer)
+    if face_width < 1e-8:
+        return None
+    pts = (pts - nose) / face_width
+
+    feats = []
+
+    # Brow raise: avg y of brow points relative to eye top
+    left_brow_y = np.mean([pts[i][1] for i in _FACE_LEFT_BROW])
+    left_eye_top = pts[_FACE_LEFT_EYE[2]][1]  # top of left eye
+    feats.append(float(left_brow_y - left_eye_top))
+
+    right_brow_y = np.mean([pts[i][1] for i in _FACE_RIGHT_BROW])
+    right_eye_top = pts[_FACE_RIGHT_EYE[2]][1]
+    feats.append(float(right_brow_y - right_eye_top))
+
+    # Eye openness: vertical / horizontal ratio
+    for eye_idx in [_FACE_LEFT_EYE, _FACE_RIGHT_EYE]:
+        horiz = np.linalg.norm(pts[eye_idx[0]] - pts[eye_idx[1]])
+        vert = np.linalg.norm(pts[eye_idx[2]] - pts[eye_idx[3]])
+        feats.append(float(vert / (horiz + 1e-8)))
+
+    # Mouth dimensions
+    mouth_pts = [pts[i] for i in _FACE_MOUTH]
+    mouth_xs = [p[0] for p in mouth_pts]
+    mouth_ys = [p[1] for p in mouth_pts]
+    mouth_w = max(mouth_xs) - min(mouth_xs)
+    mouth_h = max(mouth_ys) - min(mouth_ys)
+    feats.append(float(mouth_w))      # mouth width
+    feats.append(float(mouth_h))      # mouth height
+    feats.append(float(mouth_w / (mouth_h + 1e-8)))  # aspect ratio
+
+    # Lip separation (top lip to bottom lip)
+    top_lip = pts[_FACE_MOUTH[4]]    # index 13 in MediaPipe = top inner lip
+    bottom_lip = pts[_FACE_MOUTH[5]] # index 14 = bottom inner lip
+    feats.append(float(np.linalg.norm(top_lip - bottom_lip)))
+
+    # Jaw drop
+    chin = pts[_FACE_JAW[0]]
+    feats.append(float(chin[1]))  # already nose-relative
+
+    # Head tilt (angle of line between outer eye corners)
+    eye_vec = right_eye_outer - left_eye_outer
+    feats.append(float(np.arctan2(eye_vec[1], eye_vec[0])))
+
+    # Head turn (nose x offset from eye midline — already normalized)
+    feats.append(float(pts[_FACE_NOSE[0]][0]))
+
+    # Brow furrow (inner brow distance)
+    inner_left = pts[_FACE_LEFT_BROW[4]]   # innermost left brow point
+    inner_right = pts[_FACE_RIGHT_BROW[0]]  # innermost right brow point
+    feats.append(float(np.linalg.norm(inner_left - inner_right)))
+
+    return feats  # 12-D
+
+
+# ---- Legacy support ----
+
+def _is_legacy_frame(frame):
+    """Check if a frame is legacy format (flat array of 21 landmarks)."""
+    if isinstance(frame, list) and len(frame) >= 21:
+        if isinstance(frame[0], (list, tuple)) and len(frame[0]) >= 2:
+            return True
+    return False
+
+
+def _is_holistic_frame(frame):
+    """Check if a frame is new holistic format (dict with leftHand/rightHand)."""
+    return isinstance(frame, dict) and ('leftHand' in frame or 'rightHand' in frame)
+
+
+def _extract_frame_combined(frame):
+    """Extract features from a single frame (legacy or holistic).
+
+    Returns a feature vector of consistent dimensionality for the sequence,
+    or None if no valid hand data.
+    """
+    if _is_legacy_frame(frame):
+        # Legacy single-hand: return 59-D (padded to match holistic format)
+        pts = normalize_hand(frame)
+        if pts is None:
+            return None
+        hand_feats = extract_hand_features(pts)
+        # Pad: 59 (right hand) + 59 zeros (no left hand) + 12 zeros (no face)
+        return hand_feats + [0.0] * 59 + [0.0] * 12
+
+    if _is_holistic_frame(frame):
+        feats = []
+
+        # Right hand features (dominant hand)
+        right = normalize_hand(frame.get('rightHand'))
+        if right is not None:
+            feats.extend(extract_hand_features(right))
+        else:
+            feats.extend([0.0] * 59)
+
+        # Left hand features
+        left = normalize_hand(frame.get('leftHand'))
+        if left is not None:
+            feats.extend(extract_hand_features(left))
+        else:
+            feats.extend([0.0] * 59)
+
+        # Face features
+        face_feats = extract_face_features(frame.get('face'))
+        if face_feats is not None:
+            feats.extend(face_feats)
+        else:
+            feats.extend([0.0] * 12)
+
+        # At least one hand must be present
+        if right is None and left is None:
+            return None
+
+        return feats  # 130-D
+
+    return None
+
+
+# ---- Sequence processing ----
+
 def extract_sequence_features(landmarks_seq):
     """Extract per-frame features from a full recording sequence.
-    Returns list of 59-D vectors (one per valid frame)."""
+
+    Handles both legacy (list of 21-landmark arrays) and holistic
+    (list of {leftHand, rightHand, face, pose} dicts) formats.
+
+    Returns list of feature vectors (one per valid frame).
+    """
+    if not landmarks_seq:
+        return []
+
     features = []
     for frame in landmarks_seq:
-        pts = normalize_frame(frame)
-        if pts is not None:
-            features.append(extract_frame_features(pts))
+        fv = _extract_frame_combined(frame)
+        if fv is not None:
+            features.append(fv)
     return features
+
+
+# ---- Legacy compatibility aliases ----
+normalize_frame = normalize_hand
+extract_frame_features = extract_hand_features
 
 
 def resample_sequence(seq, target_len=RESAMPLE_LEN):
@@ -96,12 +280,24 @@ def flatten_resampled(resampled):
 
 # --- DTW ---
 def dtw_distance(seq_a, seq_b):
-    """Compute DTW distance between two feature sequences."""
+    """Compute DTW distance between two feature sequences.
+
+    Handles sequences with different feature dimensions by truncating
+    to the shorter dimension (backward compat: 59-D vs 130-D).
+    """
     n, m = len(seq_a), len(seq_b)
     if n == 0 or m == 0:
         return float("inf")
     a = np.array(seq_a)
     b = np.array(seq_b)
+
+    # Handle dimension mismatch between old and new recordings
+    dim_a, dim_b = a.shape[1] if a.ndim > 1 else 0, b.shape[1] if b.ndim > 1 else 0
+    if dim_a != dim_b and dim_a > 0 and dim_b > 0:
+        min_dim = min(dim_a, dim_b)
+        a = a[:, :min_dim]
+        b = b[:, :min_dim]
+
     cost = np.full((n + 1, m + 1), np.inf)
     cost[0, 0] = 0.0
     for i in range(1, n + 1):
@@ -148,6 +344,7 @@ class SignClassifier:
         self.model = None
         self.labels = []
         self.is_trained = False
+        self._feat_dim = None
 
     def train(self, library):
         """Train from library entries that have features."""
@@ -170,6 +367,11 @@ class SignClassifier:
             self.is_trained = False
             return
 
+        # Normalize dimensions: pad shorter vectors to max length
+        max_len = max(len(x) for x in X)
+        X = [x + [0.0] * (max_len - len(x)) for x in X]
+        self._feat_dim = max_len
+
         k = min(3, len(X))
         self.model = KNeighborsClassifier(n_neighbors=k, weights="distance", metric="euclidean")
         self.model.fit(X, y)
@@ -182,6 +384,14 @@ class SignClassifier:
             return []
         resampled = resample_sequence(query_features, RESAMPLE_LEN)
         flat = flatten_resampled(resampled)
+
+        # Pad or truncate to match training dimension
+        if self._feat_dim is not None:
+            if len(flat) < self._feat_dim:
+                flat = flat + [0.0] * (self._feat_dim - len(flat))
+            elif len(flat) > self._feat_dim:
+                flat = flat[:self._feat_dim]
+
         X = np.array([flat])
         probs = self.model.predict_proba(X)[0]
         classes = self.model.classes_

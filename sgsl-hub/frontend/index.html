@@ -14,8 +14,8 @@
   <!-- Styles -->
   <link rel="stylesheet" href="css/styles.css">
 
-  <!-- MediaPipe Hands -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js" crossorigin="anonymous"></script>
+  <!-- MediaPipe Holistic (hands + face + pose in one pass) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 
@@ -140,7 +140,7 @@
                 </svg>
               </div>
               <h3>Camera Access Needed</h3>
-              <p>We need your camera to track hand movements using MediaPipe. No video is stored — only hand landmark coordinates are saved.</p>
+              <p>We need your camera to track hand and face movements using MediaPipe Holistic. No video is stored — only landmark coordinates are saved.</p>
               <button class="btn btn-primary" id="contribute-enable-camera">Enable Camera</button>
             </div>
 
@@ -172,10 +172,11 @@
           <div class="info-card">
             <h4>How it works</h4>
             <p>
-              Your hand movements are tracked in real-time using MediaPipe Hands.
-              Each recording captures 21 hand landmarks per frame, encoding both shape
+              Your movements are tracked in real-time using MediaPipe Holistic.
+              Each recording captures both hands (21 landmarks each), face landmarks,
+              and body pose — encoding hand shape, facial expression,
               <strong>and</strong> motion. These are sent to the Python backend where
-              59-dimensional feature vectors are extracted and stored. A machine-learning
+              feature vectors are extracted and stored. A machine-learning
               classifier (k-NN + DTW) is retrained after every new contribution.
             </p>
           </div>
@@ -278,7 +279,7 @@
               </svg>
             </div>
             <h3>Camera Access Needed</h3>
-            <p>Enable your camera so we can capture your hand signs for recognition.</p>
+            <p>Enable your camera so we can capture your signs (hands, face, and pose) for recognition.</p>
             <button class="btn btn-primary" id="stt-enable-camera">Enable Camera</button>
           </div>
 
@@ -331,7 +332,7 @@
     <!-- ====== Footer ====== -->
     <footer class="footer">
       <p>SgSL Hub v2 — Building bridges through sign language</p>
-      <p class="footer-sub">MediaPipe Hands + DTW + k-NN · Python backend · AI-powered recognition</p>
+      <p class="footer-sub">MediaPipe Holistic + DTW + k-NN · Python backend · AI-powered recognition</p>
     </footer>
 
   </div>
