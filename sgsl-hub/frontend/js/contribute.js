@@ -16,6 +16,11 @@ let recording = false;
 let frames = [];
 let recStart = 0;
 let timerInterval = null;
+let autoStopTimeout = null;
+
+const RECORD_DURATION = 4000;    // auto-stop after 4 seconds
+const TRIM_START_MS = 500;       // trim first 0.5s (hand returning from click)
+const TRIM_END_MS = 400;         // trim last 0.4s (anticipatory movement to stop)
 
 export function initContribute() {
   const enableBtn = document.getElementById('contribute-enable-camera');
@@ -77,36 +82,51 @@ export function initContribute() {
       stopBtn.disabled = false;
       document.getElementById('rec-badge').classList.remove('hidden');
       timerInterval = setInterval(updateTimer, 100);
-      setStatus(statusEl, 'Recording... Perform the sign now.', 'info');
+      setStatus(statusEl, `Recording for ${RECORD_DURATION / 1000}s... Perform the sign now.`, 'info');
+
+      // Auto-stop after RECORD_DURATION
+      autoStopTimeout = setTimeout(() => finishRecording(statusEl, recordBtn, stopBtn), RECORD_DURATION);
     });
   });
 
-  stopBtn.addEventListener('click', async () => {
-    recording = false;
-    stopBtn.disabled = true;
-    clearInterval(timerInterval);
-    document.getElementById('rec-badge').classList.add('hidden');
-
-    if (frames.length < 5) {
-      setStatus(statusEl, 'Recording too short. Try again.', 'error');
-      recordBtn.disabled = false;
-      return;
-    }
-
-    const label = document.getElementById('label-input').value.trim().toLowerCase();
-    setStatus(statusEl, `Uploading "${label}" (${frames.length} frames)...`, 'loading');
-
-    try {
-      const result = await contribute(label, frames, getEmail());
-      setStatus(statusEl, `Saved "${label}" — ${result.frames} frames, ${result.features} features.`, 'success');
-      toast(`Sign "${label}" contributed!`, 'success');
-    } catch (err) {
-      setStatus(statusEl, err.message, 'error');
-      toast('Upload failed', 'error');
-    }
-
-    recordBtn.disabled = false;
+  stopBtn.addEventListener('click', () => {
+    if (autoStopTimeout) { clearTimeout(autoStopTimeout); autoStopTimeout = null; }
+    finishRecording(statusEl, recordBtn, stopBtn);
   });
+}
+
+async function finishRecording(statusEl, recordBtn, stopBtn) {
+  recording = false;
+  stopBtn.disabled = true;
+  clearInterval(timerInterval);
+  document.getElementById('rec-badge').classList.add('hidden');
+
+  // Trim start and end frames to remove button-click artefacts
+  // At ~30 fps: 0.5s = ~15 frames, 0.4s = ~12 frames
+  const fps = 30;
+  const trimStart = Math.round((TRIM_START_MS / 1000) * fps);
+  const trimEnd = Math.round((TRIM_END_MS / 1000) * fps);
+  const trimmed = frames.slice(trimStart, frames.length - trimEnd);
+
+  if (trimmed.length < 5) {
+    setStatus(statusEl, 'Recording too short after trimming. Try again — hold the sign longer.', 'error');
+    recordBtn.disabled = false;
+    return;
+  }
+
+  const label = document.getElementById('label-input').value.trim().toLowerCase();
+  setStatus(statusEl, `Uploading "${label}" (${trimmed.length} frames, trimmed from ${frames.length})...`, 'loading');
+
+  try {
+    const result = await contribute(label, trimmed, getEmail());
+    setStatus(statusEl, `Saved "${label}" — ${result.frames} frames, ${result.features} features.`, 'success');
+    toast(`Sign "${label}" contributed!`, 'success');
+  } catch (err) {
+    setStatus(statusEl, err.message, 'error');
+    toast('Upload failed', 'error');
+  }
+
+  recordBtn.disabled = false;
 }
 
 function startCountdown(onDone) {

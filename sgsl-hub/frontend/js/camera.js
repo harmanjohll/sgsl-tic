@@ -132,17 +132,34 @@ export class HolisticTracker {
       this._drawHand(results.rightHandLandmarks, 'rgba(108, 99, 255, 0.6)', '#6C63FF');
     }
 
-    // Draw face dots (subtle)
+    // Draw face key-point dots (bright cyan for visibility)
     if (hasFace) {
       for (const idx of FACE_KEY_INDICES) {
         if (idx < results.faceLandmarks.length) {
           const lm = results.faceLandmarks[idx];
+          const fx = lm.x * canvas.width, fy = lm.y * canvas.height;
+          // Outer glow
           ctx.beginPath();
-          ctx.arc(lm.x * canvas.width, lm.y * canvas.height, 1.5, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(255, 180, 100, 0.5)';
+          ctx.arc(fx, fy, 4, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(0, 230, 255, 0.25)';
+          ctx.fill();
+          // Inner dot
+          ctx.beginPath();
+          ctx.arc(fx, fy, 2.5, 0, Math.PI * 2);
+          ctx.fillStyle = '#00E6FF';
           ctx.fill();
         }
       }
+
+      // Connect key face points with thin lines for structure
+      const fl = results.faceLandmarks;
+      ctx.strokeStyle = 'rgba(0, 230, 255, 0.3)';
+      ctx.lineWidth = 1;
+      // Brow lines
+      this._drawFaceLine(ctx, fl, canvas, [70, 63, 105, 66, 107]);   // left brow
+      this._drawFaceLine(ctx, fl, canvas, [336, 296, 334, 293, 300]); // right brow
+      // Mouth outline
+      this._drawFaceLine(ctx, fl, canvas, [61, 13, 291, 14, 61]);     // mouth ring
     }
 
     if (hasAny) {
@@ -166,6 +183,18 @@ export class HolisticTracker {
         this.onTrackingLost?.();
       }
     }
+  }
+
+  _drawFaceLine(ctx, faceLandmarks, canvas, indices) {
+    ctx.beginPath();
+    for (let i = 0; i < indices.length; i++) {
+      const lm = faceLandmarks[indices[i]];
+      if (!lm) continue;
+      const x = lm.x * canvas.width, y = lm.y * canvas.height;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
   }
 
   _drawHand(landmarks, strokeColor, dotColor) {

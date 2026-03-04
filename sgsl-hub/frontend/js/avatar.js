@@ -514,7 +514,9 @@ function handSVG(c, landmarks) {
   const palmPath = palmIdx.map((i, idx) =>
     `${idx === 0 ? 'M' : 'L'}${pts[i].x},${pts[i].y}`
   ).join(' ') + ' Z';
-  s += `<path d="${palmPath}" fill="${c.skin}" stroke="${c.skinDk}" stroke-width="1" opacity="0.95"/>`;
+  s += `<path d="${palmPath}" fill="${c.skin}" stroke="none" opacity="0.95"/>`;
+  // Palm outline (on top, thin)
+  s += `<path d="${palmPath}" fill="none" stroke="${c.skinDk}" stroke-width="0.5" opacity="0.15"/>`;
 
   // Fingers — each segment has a distinct outlined rounded-rect shape
   // Widths taper: base=10, mid=8, distal=6; thumb is slightly wider
@@ -550,7 +552,13 @@ function handSVG(c, landmarks) {
                      A${wB.toFixed(1)},${wB.toFixed(1)} 0 0 1 ${x3.toFixed(1)},${y3.toFixed(1)}
                      L${x2.toFixed(1)},${y2.toFixed(1)}
                      A${wA.toFixed(1)},${wA.toFixed(1)} 0 0 1 ${x1.toFixed(1)},${y1.toFixed(1)} Z"
-            fill="${c.skin}" stroke="${c.skinDk}" stroke-width="0.6"/>`;
+            fill="${c.skin}" stroke="none"/>`;
+
+      // Joint cover circle — fills the seam between adjacent segments
+      if (i > 0) {
+        s += `<circle cx="${pts[a].x.toFixed(1)}" cy="${pts[a].y.toFixed(1)}" r="${wA.toFixed(1)}"
+              fill="${c.skin}" stroke="none"/>`;
+      }
 
       // Knuckle crease at each joint (except fingertip)
       if (i < finger.length - 2) {
