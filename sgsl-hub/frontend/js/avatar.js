@@ -282,15 +282,16 @@ function mouthSVG(c) {
 }
 
 function armSVG(c, side, wristPt) {
-  const sx = side === 'L' ? 118 : 282;
-  const sy = 232;
+  // Arm starts at bottom-center of sleeve opening
+  const sx = side === 'L' ? 119 : 281;
+  const sy = 238;
 
   if (!wristPt) {
     // Idle arm: hanging down naturally
-    const ex = side === 'L' ? 82 : 318;
-    const ey = 370;
-    const cx1 = side === 'L' ? 100 : 300;
-    const cy1 = 280;
+    const ex = side === 'L' ? 84 : 316;
+    const ey = 368;
+    const cx1 = side === 'L' ? 98 : 302;
+    const cy1 = 290;
     return `
       <path d="M${sx},${sy} Q${cx1},${cy1} ${ex},${ey}"
             stroke="${c.skin}" stroke-width="22" fill="none" stroke-linecap="round"/>
@@ -310,8 +311,9 @@ function armSVG(c, side, wristPt) {
 }
 
 function idleHandSVG(c, side) {
-  const x = side === 'L' ? 76 : 324;
-  const y = 380;
+  // Hand center matches arm endpoint exactly
+  const x = side === 'L' ? 84 : 316;
+  const y = 368;
   const dir = side === 'L' ? 1 : -1;
 
   // Cartoon hand: oval palm + 4 fingers + thumb
