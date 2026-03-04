@@ -261,4 +261,14 @@ def get_pending_signs():
     return rows
 
 
+def delete_sign_by_label(label: str):
+    """Delete all sign entries for a given label. Returns number of rows deleted."""
+    conn = _conn()
+    cur = _exec(conn, "DELETE FROM signs WHERE label = ?", (label,))
+    count = cur.rowcount
+    conn.commit()
+    _close(conn, cur)
+    return count
+
+
 init_db()

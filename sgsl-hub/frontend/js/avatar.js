@@ -115,11 +115,6 @@ function defsSVG(c) {
         <stop offset="60%" stop-color="${c.iris}"/>
         <stop offset="100%" stop-color="#0D0D0D"/>
       </radialGradient>
-      <linearGradient id="arm-shade" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="${c.skinDk}" stop-opacity="0.15"/>
-        <stop offset="50%" stop-color="${c.skinLt}" stop-opacity="0.05"/>
-        <stop offset="100%" stop-color="${c.skinDk}" stop-opacity="0.15"/>
-      </linearGradient>
       <filter id="soft-shadow" x="-10%" y="-10%" width="130%" height="130%">
         <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur"/>
         <feOffset in="blur" dx="2" dy="3" result="off"/>
@@ -202,7 +197,6 @@ function shirtSVG(c) {
       <path d="M178,176 L184,198 L200,182 Z" fill="${c.shirtLt}"/>
       <path d="M178,176 L184,198 L200,182 Z" fill="none"
             stroke="${c.shirtDk}" stroke-width="0.6" opacity="0.25"/>
-      <!-- Collar fold highlight -->
       <path d="M180,178 L185,192" stroke="white" stroke-width="0.5" opacity="0.12"/>
 
       <!-- Right collar flap -->
@@ -223,11 +217,8 @@ function shirtSVG(c) {
 
       <!-- Left sleeve -->
       <path d="M120,200 Q106,214 100,242 L138,242 Q130,218 130,200 Z" fill="${c.shirt}"/>
-      <!-- Sleeve shading -->
       <path d="M120,200 Q106,214 100,242 L112,242 Q116,218 120,205 Z" fill="${c.shirtDk}" opacity="0.15"/>
-      <!-- Sleeve hem -->
       <path d="M100,240 Q119,246 138,240" stroke="${c.shirtDk}" stroke-width="1.8" fill="none" opacity="0.18"/>
-      <!-- Shoulder seam -->
       <path d="M132,200 Q126,208 122,218" stroke="${c.shirtDk}" stroke-width="0.8" fill="none" opacity="0.12"/>
 
       <!-- Right sleeve -->
@@ -241,32 +232,23 @@ function shirtSVG(c) {
 function neckSVG(c) {
   return `
     <g class="neck">
-      <!-- Neck -->
       <rect x="186" y="148" width="28" height="32" rx="11" fill="${c.skin}"/>
-      <!-- Neck shading -->
       <rect x="186" y="148" width="14" height="28" rx="7" fill="${c.skinDk}" opacity="0.06"/>
-      <!-- Throat highlight -->
       <ellipse cx="202" cy="160" rx="4" ry="8" fill="${c.skinLt}" opacity="0.12"/>
-      <!-- Neck shadow under chin -->
       <ellipse cx="200" cy="152" rx="20" ry="6" fill="${c.skinDk}" opacity="0.18"/>
-      <!-- Collar shadow on neck -->
       <ellipse cx="200" cy="176" rx="18" ry="4" fill="${c.skinDk}" opacity="0.1"/>
     </g>`;
 }
 
 function headSVG(c) {
   const isMale = c.gender === 'male';
-  // Males: slightly wider jaw, more angular. Females: softer, rounder chin.
   const jaw = isMale
     ? `C218,150 210,158 200,160 C190,158 182,150 170,142`
     : `C216,152 210,160 200,162 C190,160 184,152 172,142`;
   const chinY = isMale ? 160 : 162;
   return `
     <g class="head">
-      <!-- Head shadow on body -->
       <ellipse cx="200" cy="158" rx="40" ry="6" fill="#000" opacity="0.06"/>
-
-      <!-- Face shape -->
       <path d="M200,18
                C238,18 254,46 254,80
                C254,110 244,130 230,142
@@ -274,16 +256,12 @@ function headSVG(c) {
                C156,130 146,110 146,80
                C146,46 162,18 200,18 Z"
             fill="${c.skin}" filter="url(#inner-shadow)"/>
-
-      <!-- Face highlight (forehead/top) -->
       <path d="M200,22
                C230,22 246,44 248,70
                C248,58 236,30 200,26
                C164,30 152,58 152,70
                C154,44 170,22 200,22 Z"
             fill="${c.skinLt}" opacity="0.2"/>
-
-      <!-- Face shading overlay -->
       <path d="M200,18
                C238,18 254,46 254,80
                C254,110 244,130 230,142
@@ -291,17 +269,11 @@ function headSVG(c) {
                C156,130 146,110 146,80
                C146,46 162,18 200,18 Z"
             fill="url(#face-grad)"/>
-
-      <!-- Jaw shadow -->
       <path d="M166,132 Q183,142 200,${chinY} Q217,142 234,132
                Q226,148 200,${chinY + 4} Q174,148 166,132 Z"
             fill="${c.skinDk}" opacity="0.08"/>
-
-      <!-- Cheek warmth -->
       <ellipse cx="168" cy="108" rx="14" ry="10" fill="url(#cheek-l)"/>
       <ellipse cx="232" cy="108" rx="14" ry="10" fill="url(#cheek-r)"/>
-
-      <!-- Subtle face contour -->
       <path d="M168,140 C156,128 148,108 148,80"
             stroke="${c.skinDk}" stroke-width="0.8" fill="none" opacity="0.06"/>
       <path d="M232,140 C244,128 252,108 252,80"
@@ -312,17 +284,12 @@ function headSVG(c) {
 function earsSVG(c) {
   return `
     <g class="ears">
-      <!-- Left ear -->
       <ellipse cx="147" cy="88" rx="11" ry="15" fill="${c.skin}"/>
       <ellipse cx="147" cy="88" rx="11" ry="15" fill="${c.skinDk}" opacity="0.06"/>
       <ellipse cx="149" cy="88" rx="7" ry="11" fill="${c.skinDk}" opacity="0.08"/>
-      <!-- Ear cartilage -->
       <path d="M146,78 Q152,84 151,94 Q149,98 147,100"
             stroke="${c.skinDk}" stroke-width="1" fill="none" opacity="0.15"/>
-      <!-- Ear lobe highlight -->
       <ellipse cx="148" cy="98" rx="4" ry="4" fill="${c.skinLt}" opacity="0.1"/>
-
-      <!-- Right ear -->
       <ellipse cx="253" cy="88" rx="11" ry="15" fill="${c.skin}"/>
       <ellipse cx="253" cy="88" rx="11" ry="15" fill="${c.skinDk}" opacity="0.06"/>
       <ellipse cx="251" cy="88" rx="7" ry="11" fill="${c.skinDk}" opacity="0.08"/>
@@ -334,10 +301,8 @@ function earsSVG(c) {
 
 function hairSVG(c) {
   if (c.gender === 'female') {
-    // Mei Ling: longer hair with side-swept bangs
     return `
       <g class="hair">
-        <!-- Hair back volume (behind head) -->
         <path d="M142,70
                  C142,28 168,4 200,2
                  C232,4 258,28 258,70
@@ -348,17 +313,12 @@ function hairSVG(c) {
                  L152,100 L148,140
                  L140,120 Z"
               fill="${c.hair}"/>
-
-        <!-- Side hair left -->
         <path d="M148,70 L144,140 Q140,155 136,165
                  Q134,155 138,130 L142,90 Z"
               fill="${c.hair}"/>
-        <!-- Side hair right -->
         <path d="M252,70 L256,140 Q260,155 264,165
                  Q266,155 262,130 L258,90 Z"
               fill="${c.hair}"/>
-
-        <!-- Top hair mass -->
         <path d="M153,60
                  C154,26 174,6 200,4
                  C226,6 246,26 247,60
@@ -367,28 +327,20 @@ function hairSVG(c) {
                  Q188,12 172,24
                  Q156,38 153,60 Z"
               fill="${c.hair}"/>
-
-        <!-- Bangs swept right -->
         <path d="M158,52 Q164,34 185,26 Q175,38 170,56 Z" fill="${c.hair}"/>
         <path d="M168,48 Q178,32 200,24 Q188,36 182,54 Z" fill="${c.hair}"/>
         <path d="M178,50 Q190,34 210,28 Q198,40 192,55 Z" fill="${c.hair}"/>
-
-        <!-- Hair shine -->
         <path d="M175,20 Q190,12 210,16 Q195,18 180,26"
               fill="${c.hairHi}" opacity="0.3"/>
         <path d="M168,32 Q180,22 195,20" stroke="${c.hairHi}"
               stroke-width="1.5" fill="none" opacity="0.15"/>
-
-        <!-- Hair strand details -->
         <path d="M144,105 Q146,85 152,70" stroke="${c.hairHi}" stroke-width="0.7" fill="none" opacity="0.1"/>
         <path d="M256,105 Q254,85 248,70" stroke="${c.hairHi}" stroke-width="0.7" fill="none" opacity="0.1"/>
       </g>`;
   }
 
-  // Rajan: neat short hair
   return `
     <g class="hair">
-      <!-- Main hair mass -->
       <path d="M148,74
                C148,32 170,10 200,8
                C230,10 252,32 252,74
@@ -397,8 +349,6 @@ function hairSVG(c) {
                Q174,18 160,36
                Q148,52 148,74 Z"
             fill="${c.hair}"/>
-
-      <!-- Hair top volume -->
       <path d="M154,58
                C156,28 176,8 200,6
                C224,8 244,28 246,58
@@ -407,20 +357,12 @@ function hairSVG(c) {
                Q188,14 172,26
                Q158,38 154,58 Z"
             fill="${c.hair}"/>
-
-      <!-- Hair texture/part -->
       <path d="M172,28 Q186,16 200,12 Q194,20 184,30"
             fill="${c.hairHi}" opacity="0.15"/>
-
-      <!-- Hair shine -->
       <path d="M178,18 Q192,10 212,14 Q198,14 184,22"
             fill="${c.hairHi}" opacity="0.25"/>
-
-      <!-- Hair texture lines -->
       <path d="M170,32 Q185,20 200,16" stroke="${c.hairHi}" stroke-width="0.8" fill="none" opacity="0.12"/>
       <path d="M230,32 Q215,20 200,16" stroke="${c.hairHi}" stroke-width="0.8" fill="none" opacity="0.08"/>
-
-      <!-- Sideburn hints -->
       <path d="M150,72 L149,82" stroke="${c.hair}" stroke-width="3" stroke-linecap="round" opacity="0.6"/>
       <path d="M250,72 L251,82" stroke="${c.hair}" stroke-width="3" stroke-linecap="round" opacity="0.6"/>
     </g>`;
@@ -428,7 +370,6 @@ function hairSVG(c) {
 
 function eyesSVG(c) {
   const isFemale = c.gender === 'female';
-  // Females: slightly larger, rounder eyes with lashes
   const rx = isFemale ? 13 : 12;
   const ry = isFemale ? 11 : 10;
   const irisR = isFemale ? 6.5 : 6;
@@ -437,13 +378,11 @@ function eyesSVG(c) {
   let lashes = '';
   if (isFemale) {
     lashes = `
-      <!-- Left lashes -->
       <path d="M167,76 L164,72" stroke="${c.brow}" stroke-width="1.2" stroke-linecap="round" opacity="0.5"/>
       <path d="M172,74 L170,69" stroke="${c.brow}" stroke-width="1.2" stroke-linecap="round" opacity="0.5"/>
       <path d="M178,73 L178,68" stroke="${c.brow}" stroke-width="1" stroke-linecap="round" opacity="0.4"/>
       <path d="M184,73 L185,68" stroke="${c.brow}" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
       <path d="M189,75 L192,71" stroke="${c.brow}" stroke-width="1" stroke-linecap="round" opacity="0.3"/>
-      <!-- Right lashes -->
       <path d="M211,75 L208,71" stroke="${c.brow}" stroke-width="1" stroke-linecap="round" opacity="0.3"/>
       <path d="M216,73 L215,68" stroke="${c.brow}" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
       <path d="M222,73 L222,68" stroke="${c.brow}" stroke-width="1" stroke-linecap="round" opacity="0.4"/>
@@ -455,35 +394,20 @@ function eyesSVG(c) {
   return `
     <g class="eyes">
       ${lashes}
-
-      <!-- Left eye socket shadow -->
       <ellipse cx="180" cy="84" rx="${rx + 2}" ry="${ry + 1}" fill="${c.skinDk}" opacity="0.04"/>
-
-      <!-- Left eye -->
       <ellipse cx="180" cy="84" rx="${rx}" ry="${ry}" fill="url(#eye-white-l)"/>
       <ellipse cx="180" cy="84" rx="${rx}" ry="${ry}" fill="none"
                stroke="${c.skinDk}" stroke-width="0.8" opacity="0.15"/>
-      <!-- Iris -->
       <circle cx="181" cy="85" r="${irisR}" fill="url(#iris-grad-l)"/>
-      <!-- Iris detail ring -->
       <circle cx="181" cy="85" r="${irisR}" fill="none" stroke="${c.iris}" stroke-width="0.5" opacity="0.3"/>
-      <!-- Pupil -->
       <circle cx="181" cy="85" r="${pupilR}" fill="#0D0D0D"/>
-      <!-- Primary highlight -->
       <circle cx="184" cy="82" r="2.2" fill="white" opacity="0.92"/>
-      <!-- Secondary highlight -->
       <circle cx="178" cy="87" r="1.2" fill="white" opacity="0.35"/>
-      <!-- Upper eyelid crease -->
       <path d="M${180 - rx},${84 - ry + 4} Q180,${84 - ry - 2} ${180 + rx},${84 - ry + 4}"
             stroke="${c.skinDk}" stroke-width="${isFemale ? 2 : 1.8}" fill="none" opacity="${isFemale ? 0.4 : 0.3}"/>
-      <!-- Lower lid subtle line -->
       <path d="M${180 - rx + 2},${84 + ry - 2} Q180,${84 + ry + 1} ${180 + rx - 2},${84 + ry - 2}"
             stroke="${c.skinDk}" stroke-width="0.5" fill="none" opacity="0.08"/>
-
-      <!-- Right eye socket shadow -->
       <ellipse cx="220" cy="84" rx="${rx + 2}" ry="${ry + 1}" fill="${c.skinDk}" opacity="0.04"/>
-
-      <!-- Right eye -->
       <ellipse cx="220" cy="84" rx="${rx}" ry="${ry}" fill="url(#eye-white-r)"/>
       <ellipse cx="220" cy="84" rx="${rx}" ry="${ry}" fill="none"
                stroke="${c.skinDk}" stroke-width="0.8" opacity="0.15"/>
@@ -501,7 +425,6 @@ function eyesSVG(c) {
 
 function eyebrowsSVG(c) {
   const isFemale = c.gender === 'female';
-  // Males: thick and strong. Females: thinner, more arched.
   const sw = isFemale ? 3.2 : 5;
   const archL = isFemale
     ? 'M164,66 Q179,56 194,65'
@@ -515,7 +438,6 @@ function eyebrowsSVG(c) {
       <path d="${archL}" stroke="${c.brow}" stroke-width="${sw}" fill="none" stroke-linecap="round"/>
       <path d="${archR}" stroke="${c.brow}" stroke-width="${sw}" fill="none" stroke-linecap="round"/>
       ${!isFemale ? `
-        <!-- Brow hair texture -->
         <path d="${archL}" stroke="${c.brow}" stroke-width="1" fill="none" opacity="0.2"
               stroke-dasharray="2,3" stroke-linecap="round"/>
         <path d="${archR}" stroke="${c.brow}" stroke-width="1" fill="none" opacity="0.2"
@@ -527,24 +449,15 @@ function eyebrowsSVG(c) {
 function noseSVG(c) {
   return `
     <g class="nose">
-      <!-- Nose bridge shadow -->
       <path d="M198,86 Q195,98 195,108"
             stroke="${c.skinDk}" stroke-width="1.2" fill="none" opacity="0.15"/>
       <path d="M202,86 Q205,98 205,108"
             stroke="${c.skinDk}" stroke-width="0.6" fill="none" opacity="0.06"/>
-
-      <!-- Nose tip -->
       <ellipse cx="200" cy="110" rx="9" ry="6" fill="${c.skin}"/>
       <ellipse cx="200" cy="110" rx="9" ry="6" fill="${c.skinDk}" opacity="0.06"/>
-
-      <!-- Nose highlight -->
       <ellipse cx="201" cy="107" rx="3.5" ry="2.5" fill="${c.skinLt}" opacity="0.22"/>
-
-      <!-- Nostril area shadow -->
       <path d="M192,112 Q200,118 208,112"
             stroke="${c.skinDk}" stroke-width="1.6" fill="none" opacity="0.22" stroke-linecap="round"/>
-
-      <!-- Nostrils -->
       <ellipse cx="194" cy="112" rx="2.5" ry="1.8" fill="${c.skinDk}" opacity="0.12"/>
       <ellipse cx="206" cy="112" rx="2.5" ry="1.8" fill="${c.skinDk}" opacity="0.12"/>
     </g>`;
@@ -552,32 +465,23 @@ function noseSVG(c) {
 
 function mouthSVG(c) {
   const isFemale = c.gender === 'female';
-  // Females: slightly fuller lips with color
   return `
     <g class="mouth">
-      <!-- Upper lip line -->
       <path d="M186,126 Q193,122 200,124 Q207,122 214,126"
             stroke="${c.lipDk}" stroke-width="${isFemale ? 1.8 : 1.5}" fill="none" opacity="${isFemale ? 0.5 : 0.35}"/>
-      <!-- Cupid's bow -->
       <path d="M193,124 L200,122 L207,124" stroke="${c.lipDk}" stroke-width="0.8" fill="none" opacity="0.15"/>
-
-      <!-- Lower lip -->
       <path d="M188,126 Q200,136 212,126"
             fill="${c.lip}" opacity="${isFemale ? 0.2 : 0.1}"/>
-
-      <!-- Smile line -->
       <path d="M186,126 Q200,135 214,126"
             stroke="${c.lipDk}" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.3"/>
-
-      <!-- Lower lip highlight -->
       <path d="M194,130 Q200,133 206,130"
             fill="${c.skinLt}" opacity="0.08"/>
-
-      <!-- Smile dimples -->
       <path d="M184,125 Q183,128 184,131" stroke="${c.skinDk}" stroke-width="0.7" fill="none" opacity="0.08"/>
       <path d="M216,125 Q217,128 216,131" stroke="${c.skinDk}" stroke-width="0.7" fill="none" opacity="0.08"/>
     </g>`;
 }
+
+// --- Arms: forearms emerge from sleeves, elbows bent, hands in front ---
 
 function armSVG(c, side, wristPt) {
   // Arm starts at bottom-center of sleeve opening
@@ -585,21 +489,30 @@ function armSVG(c, side, wristPt) {
   const sy = 240;
 
   if (!wristPt) {
-    // Idle arm: hanging down naturally
-    const ex = side === 'L' ? 84 : 316;
-    const ey = 368;
-    const cx1 = side === 'L' ? 98 : 302;
-    const cy1 = 290;
+    // IDLE POSE: Arms bent at elbows, hands in front of body at waist level
+    // Upper arm goes from sleeve down and slightly inward to elbow
+    const elbowX = side === 'L' ? 130 : 270;
+    const elbowY = 305;
+    // Forearm goes from elbow inward to hands in front of belly
+    const handX = side === 'L' ? 158 : 242;
+    const handY = 330;
+
     return `
       <g class="arm-${side}">
-        <path d="M${sx},${sy} Q${cx1},${cy1} ${ex},${ey}"
+        <!-- Upper arm: sleeve to elbow -->
+        <path d="M${sx},${sy} Q${side === 'L' ? 112 : 288},${270} ${elbowX},${elbowY}"
               stroke="${c.skin}" stroke-width="24" fill="none" stroke-linecap="round"/>
-        <!-- Arm shading -->
-        <path d="M${sx},${sy} Q${cx1},${cy1} ${ex},${ey}"
+        <path d="M${sx},${sy} Q${side === 'L' ? 112 : 288},${270} ${elbowX},${elbowY}"
               stroke="${c.skinDk}" stroke-width="24" fill="none" stroke-linecap="round" opacity="0.08"/>
+
+        <!-- Forearm: elbow to hand position -->
+        <path d="M${elbowX},${elbowY} Q${side === 'L' ? 140 : 260},${320} ${handX},${handY}"
+              stroke="${c.skin}" stroke-width="22" fill="none" stroke-linecap="round"/>
+        <path d="M${elbowX},${elbowY} Q${side === 'L' ? 140 : 260},${320} ${handX},${handY}"
+              stroke="${c.skinDk}" stroke-width="22" fill="none" stroke-linecap="round" opacity="0.06"/>
         <!-- Arm highlight -->
-        <path d="M${sx},${sy} Q${cx1},${cy1} ${ex},${ey}"
-              stroke="${c.skinLt}" stroke-width="8" fill="none" stroke-linecap="round" opacity="0.08"/>
+        <path d="M${elbowX},${elbowY} Q${side === 'L' ? 140 : 260},${320} ${handX},${handY}"
+              stroke="${c.skinLt}" stroke-width="7" fill="none" stroke-linecap="round" opacity="0.08"/>
       </g>`;
   }
 
@@ -619,60 +532,63 @@ function armSVG(c, side, wristPt) {
 }
 
 function idleHandSVG(c, side) {
-  // Hand center matches arm endpoint exactly
-  const x = side === 'L' ? 84 : 316;
-  const y = 368;
+  // Hands are now IN FRONT of the body, palms facing viewer
+  const x = side === 'L' ? 158 : 242;
+  const y = 330;
   const dir = side === 'L' ? 1 : -1;
 
+  // Relaxed open hand, palm facing forward, fingers slightly spread
   return `
     <g class="idle-hand" filter="url(#inner-shadow)">
-      <!-- Thumb (behind palm) -->
-      <ellipse cx="${x - 19 * dir}" cy="${y - 4}" rx="5" ry="9"
+      <!-- Thumb (to the side) -->
+      <ellipse cx="${x - 20 * dir}" cy="${y + 2}" rx="5.5" ry="9"
                fill="${c.skin}" stroke="${c.skinDk}" stroke-width="0.4"
-               transform="rotate(${dir * -25},${x - 19 * dir},${y - 4})"/>
+               transform="rotate(${dir * -20},${x - 20 * dir},${y + 2})"/>
+      <!-- Thumb highlight -->
+      <ellipse cx="${x - 20 * dir}" cy="${y - 2}" rx="2.5" ry="4"
+               fill="${c.skinLt}" opacity="0.1"
+               transform="rotate(${dir * -20},${x - 20 * dir},${y - 2})"/>
 
       <!-- Palm -->
-      <ellipse cx="${x}" cy="${y + 2}" rx="17" ry="19" fill="${c.skin}"/>
-      <!-- Palm shading -->
-      <ellipse cx="${x + dir * 3}" cy="${y + 5}" rx="11" ry="13" fill="${c.skinDk}" opacity="0.06"/>
-      <!-- Palm highlight -->
-      <ellipse cx="${x - dir * 2}" cy="${y - 2}" rx="8" ry="10" fill="${c.skinLt}" opacity="0.1"/>
+      <ellipse cx="${x}" cy="${y + 4}" rx="18" ry="20" fill="${c.skin}"/>
+      <ellipse cx="${x + dir * 3}" cy="${y + 7}" rx="12" ry="14" fill="${c.skinDk}" opacity="0.05"/>
+      <ellipse cx="${x - dir * 2}" cy="${y}" rx="9" ry="11" fill="${c.skinLt}" opacity="0.1"/>
 
-      <!-- Fingers -->
+      <!-- Fingers (pointing upward/forward, slightly spread) -->
       <!-- Index -->
-      <rect x="${x - 11 * dir - 3.5}" y="${y - 33}" width="7" height="23" rx="3.5"
+      <rect x="${x - 12 * dir - 3.5}" y="${y - 30}" width="7" height="22" rx="3.5"
             fill="${c.skin}" stroke="${c.skinDk}" stroke-width="0.4"
-            transform="rotate(${dir * -5},${x - 11 * dir},${y - 12})"/>
-      <!-- Middle -->
-      <rect x="${x - 4 * dir - 3.5}" y="${y - 36}" width="7.5" height="26" rx="3.75"
+            transform="rotate(${dir * -6},${x - 12 * dir},${y - 8})"/>
+      <!-- Middle (longest) -->
+      <rect x="${x - 4 * dir - 3.75}" y="${y - 34}" width="7.5" height="26" rx="3.75"
             fill="${c.skin}" stroke="${c.skinDk}" stroke-width="0.4"
-            transform="rotate(${dir * -1},${x - 4 * dir},${y - 12})"/>
+            transform="rotate(${dir * -2},${x - 4 * dir},${y - 8})"/>
       <!-- Ring -->
-      <rect x="${x + 3 * dir - 3.5}" y="${y - 34}" width="7" height="24" rx="3.5"
+      <rect x="${x + 4 * dir - 3.5}" y="${y - 31}" width="7" height="23" rx="3.5"
             fill="${c.skin}" stroke="${c.skinDk}" stroke-width="0.4"
-            transform="rotate(${dir * 2},${x + 3 * dir},${y - 12})"/>
+            transform="rotate(${dir * 2},${x + 4 * dir},${y - 8})"/>
       <!-- Pinky -->
-      <rect x="${x + 10 * dir - 3}" y="${y - 30}" width="6" height="20" rx="3"
+      <rect x="${x + 11 * dir - 3}" y="${y - 26}" width="6" height="18" rx="3"
             fill="${c.skin}" stroke="${c.skinDk}" stroke-width="0.4"
-            transform="rotate(${dir * 5},${x + 10 * dir},${y - 12})"/>
+            transform="rotate(${dir * 6},${x + 11 * dir},${y - 8})"/>
 
       <!-- Fingertip highlights -->
-      <circle cx="${x - 11 * dir}" cy="${y - 32}" r="2.5" fill="${c.skinLt}" opacity="0.12"/>
-      <circle cx="${x - 4 * dir}" cy="${y - 35}" r="2.5" fill="${c.skinLt}" opacity="0.12"/>
-      <circle cx="${x + 3 * dir}" cy="${y - 33}" r="2.5" fill="${c.skinLt}" opacity="0.12"/>
-      <circle cx="${x + 10 * dir}" cy="${y - 29}" r="2" fill="${c.skinLt}" opacity="0.12"/>
+      <circle cx="${x - 12 * dir}" cy="${y - 29}" r="2.5" fill="${c.skinLt}" opacity="0.12"/>
+      <circle cx="${x - 4 * dir}" cy="${y - 33}" r="2.5" fill="${c.skinLt}" opacity="0.12"/>
+      <circle cx="${x + 4 * dir}" cy="${y - 30}" r="2.5" fill="${c.skinLt}" opacity="0.12"/>
+      <circle cx="${x + 11 * dir}" cy="${y - 25}" r="2" fill="${c.skinLt}" opacity="0.12"/>
 
       <!-- Knuckle line -->
-      <path d="M${x - 14 * dir},${y - 10} Q${x},${y - 14} ${x + 14 * dir},${y - 10}"
+      <path d="M${x - 15 * dir},${y - 6} Q${x},${y - 10} ${x + 15 * dir},${y - 6}"
             stroke="${c.skinDk}" stroke-width="0.7" fill="none" opacity="0.1"/>
 
-      <!-- Finger crease lines -->
-      <line x1="${x - 11 * dir - 2}" y1="${y - 20}" x2="${x - 11 * dir + 2}" y2="${y - 20}"
-            stroke="${c.skinDk}" stroke-width="0.4" opacity="0.1"/>
-      <line x1="${x - 4 * dir - 2}" y1="${y - 22}" x2="${x - 4 * dir + 2}" y2="${y - 22}"
-            stroke="${c.skinDk}" stroke-width="0.4" opacity="0.1"/>
-      <line x1="${x + 3 * dir - 2}" y1="${y - 20}" x2="${x + 3 * dir + 2}" y2="${y - 20}"
-            stroke="${c.skinDk}" stroke-width="0.4" opacity="0.1"/>
+      <!-- Finger crease hints -->
+      <line x1="${x - 12 * dir - 2}" y1="${y - 16}" x2="${x - 12 * dir + 2}" y2="${y - 16}"
+            stroke="${c.skinDk}" stroke-width="0.4" opacity="0.08"/>
+      <line x1="${x - 4 * dir - 2}" y1="${y - 18}" x2="${x - 4 * dir + 2}" y2="${y - 18}"
+            stroke="${c.skinDk}" stroke-width="0.4" opacity="0.08"/>
+      <line x1="${x + 4 * dir - 2}" y1="${y - 16}" x2="${x + 4 * dir + 2}" y2="${y - 16}"
+            stroke="${c.skinDk}" stroke-width="0.4" opacity="0.08"/>
     </g>`;
 }
 
@@ -687,7 +603,6 @@ function handSVG(c, landmarks) {
     `${idx === 0 ? 'M' : 'L'}${pts[i].x},${pts[i].y}`
   ).join(' ') + ' Z';
   s += `<path d="${palmPath}" fill="${c.skin}" opacity="0.95"/>`;
-  // Palm shading
   s += `<path d="${palmPath}" fill="${c.skinDk}" opacity="0.05"/>`;
 
   // Thick filled fingers with rounded segments
@@ -697,17 +612,13 @@ function handSVG(c, landmarks) {
       const w = i === 0 ? 11 : (i === 1 ? 9 : 7.5);
       s += `<line x1="${pts[a].x}" y1="${pts[a].y}" x2="${pts[b].x}" y2="${pts[b].y}"
             stroke="${c.skin}" stroke-width="${w}" stroke-linecap="round"/>`;
-      // Finger shading
       s += `<line x1="${pts[a].x}" y1="${pts[a].y}" x2="${pts[b].x}" y2="${pts[b].y}"
             stroke="${c.skinDk}" stroke-width="${w}" stroke-linecap="round" opacity="0.04"/>`;
     }
-    // Rounded fingertip
     const tip = finger[finger.length - 1];
     s += `<circle cx="${pts[tip].x}" cy="${pts[tip].y}" r="5" fill="${c.skin}"/>`;
     s += `<circle cx="${pts[tip].x}" cy="${pts[tip].y}" r="5" fill="${c.skinDk}" opacity="0.04"/>`;
-    // Fingertip highlight
     s += `<circle cx="${pts[tip].x - 1}" cy="${pts[tip].y - 1}" r="2" fill="${c.skinLt}" opacity="0.15"/>`;
-    // Nail hint
     s += `<circle cx="${pts[tip].x}" cy="${pts[tip].y}" r="3" fill="${c.skinLt}" opacity="0.06"/>`;
   }
 
@@ -772,10 +683,10 @@ function render(landmarks) {
          style="width:100%;height:100%;display:block;">
       ${defsSVG(c)}
       <rect width="400" height="520" fill="url(#av-bg)" rx="8"/>
-      ${armSVG(c, 'L', wrist)}
-      ${armSVG(c, 'R', null)}
-      ${bodySVG(c)}
-      ${hasHands ? handSVG(c, landmarks) : `${idleHandSVG(c, 'L')}${idleHandSVG(c, 'R')}`}
+      ${hasHands
+        ? `${armSVG(c, 'L', wrist)}${armSVG(c, 'R', null)}${bodySVG(c)}${handSVG(c, landmarks)}`
+        : `${armSVG(c, 'L', null)}${armSVG(c, 'R', null)}${bodySVG(c)}${idleHandSVG(c, 'L')}${idleHandSVG(c, 'R')}`
+      }
       <text x="200" y="508" text-anchor="middle" fill="rgba(255,255,255,0.2)"
             font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="600"
             letter-spacing="0.5">${c.name}</text>
