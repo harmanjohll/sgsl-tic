@@ -29,7 +29,7 @@ from ml.recognizer import (
     classifier,
 )
 
-app = FastAPI(title="SgSL Hub", version="2.0")
+app = FastAPI(title="SgSL Hub", version="3.0")  # v3: Holistic (two hands + face + pose)
 
 FRONTEND = Path(__file__).parent.parent / "frontend"
 

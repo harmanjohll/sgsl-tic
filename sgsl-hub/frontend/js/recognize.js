@@ -1,11 +1,11 @@
 /* ============================================================
    SgSL Hub — Sign Recognition Module (Sign-to-Text)
    ============================================================
-   Captures hand landmarks, sends to backend for DTW + k-NN
-   recognition, and displays results.
+   Captures holistic landmarks (two hands + face + pose), sends
+   to backend for DTW + k-NN recognition, and displays results.
    ============================================================ */
 
-import { HandTracker } from './camera.js';
+import { HolisticTracker } from './camera.js';
 import { recognize } from './api.js';
 import { setStatus, toast } from './app.js';
 
@@ -28,21 +28,21 @@ export function initRecognize() {
       enableBtn.disabled = true;
       enableBtn.textContent = 'Starting camera...';
 
-      tracker = new HandTracker(
+      tracker = new HolisticTracker(
         document.getElementById('stt-video'),
         document.getElementById('stt-canvas'),
         {
-          onResults: (pts) => {
-            if (capturing) frames.push(pts);
+          onResults: (frame) => {
+            if (capturing) frames.push(frame);
           },
-          onHandDetected: () => {
+          onTrackingDetected: () => {
             handStatus.classList.add('detected');
-            handStatus.querySelector('span:last-child').textContent = 'Hand detected';
+            handStatus.querySelector('span:last-child').textContent = 'Tracking active';
             startBtn.disabled = false;
           },
-          onHandLost: () => {
+          onTrackingLost: () => {
             handStatus.classList.remove('detected');
-            handStatus.querySelector('span:last-child').textContent = 'Waiting for hand...';
+            handStatus.querySelector('span:last-child').textContent = 'Waiting for hands...';
           },
         }
       );
@@ -51,7 +51,7 @@ export function initRecognize() {
 
       prompt.classList.add('hidden');
       videoArea.classList.remove('hidden');
-      setStatus(statusEl, 'Camera ready. Show your hand, then click Start.', 'info');
+      setStatus(statusEl, 'Camera ready. Show your hands, then click Start.', 'info');
     } catch (err) {
       enableBtn.disabled = false;
       enableBtn.textContent = 'Enable Camera';
@@ -135,7 +135,6 @@ function mergeResults(dtw, knn) {
 
   knn.forEach(r => {
     if (map[r.label]) {
-      // Average confidences, mark as combined
       map[r.label].confidence = (map[r.label].confidence + r.confidence) / 2;
       map[r.label].method = 'DTW+KNN';
     } else {

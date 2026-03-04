@@ -592,7 +592,53 @@ function handSVG(c, landmarks) {
 }
 
 // --- Full body composite ---
-function bodySVG(c) {
+// --- Face expression from landmark data ---
+// face subset indices (matching camera.js FACE_KEY_INDICES order):
+// 0-4: left brow, 5-9: right brow, 10-13: left eye, 14-17: right eye
+// 18-20: nose, 21-28: mouth, 29-31: jaw
+function facialExpressionSVG(c, faceData) {
+  if (!faceData || faceData.length < 32) return '';
+  let s = '';
+
+  // Compute brow raise: avg y of brow relative to eye top
+  const leftBrowY = (faceData[0][1] + faceData[1][1] + faceData[2][1] + faceData[3][1] + faceData[4][1]) / 5;
+  const leftEyeTop = faceData[12][1];  // top of left eye
+  const rightBrowY = (faceData[5][1] + faceData[6][1] + faceData[7][1] + faceData[8][1] + faceData[9][1]) / 5;
+  const rightEyeTop = faceData[16][1]; // top of right eye
+
+  // Brow raise offset (negative = raised): map to SVG offset
+  const browRaise = ((leftBrowY - leftEyeTop) + (rightBrowY - rightEyeTop)) / 2;
+  const browOffset = Math.max(-8, Math.min(4, browRaise * -80)); // pixels
+
+  // Mouth opening: distance between top and bottom lip points
+  const mouthTop = faceData[25];    // top inner lip
+  const mouthBottom = faceData[26]; // bottom inner lip
+  const mouthOpen = Math.abs(mouthTop[1] - mouthBottom[1]) * 400; // scale up
+  const mouthWidth = Math.abs(faceData[21][0] - faceData[22][0]) * 300;
+
+  // Animated eyebrows (override static ones)
+  const isFemale = c.gender === 'female';
+  const sw = isFemale ? 1.8 : 2.8;
+  const baseY = isFemale ? 60 : 62;
+  const y = baseY + browOffset;
+  s += `<g class="eyebrows-animated">
+    <path d="M166,${y} Q180,${y - 8} 192,${y + 1}" stroke="${c.brow}" stroke-width="${sw}" fill="none" stroke-linecap="round" opacity="${isFemale ? 0.5 : 0.65}"/>
+    <path d="M208,${y + 1} Q220,${y - 8} 234,${y}" stroke="${c.brow}" stroke-width="${sw}" fill="none" stroke-linecap="round" opacity="${isFemale ? 0.5 : 0.65}"/>
+  </g>`;
+
+  // Animated mouth
+  if (mouthOpen > 3) {
+    const mw = Math.min(18, Math.max(10, mouthWidth));
+    const mh = Math.min(10, Math.max(2, mouthOpen));
+    s += `<ellipse cx="200" cy="${isFemale ? 132 : 130}" rx="${mw}" ry="${mh}"
+          fill="${c.lipDk}" opacity="0.3"/>`;
+  }
+
+  return s;
+}
+
+function bodySVG(c, faceData) {
+  const hasFace = faceData && faceData.length >= 32;
   return `
     <g class="avatar-body">
       ${pantsSVG(c)}
@@ -604,9 +650,10 @@ function bodySVG(c) {
       ${headSVG(c)}
       ${hairSVG(c)}
       ${eyesSVG(c)}
-      ${eyebrowsSVG(c)}
+      ${hasFace ? '' : eyebrowsSVG(c)}
       ${noseSVG(c)}
-      ${mouthSVG(c)}
+      ${hasFace ? '' : mouthSVG(c)}
+      ${hasFace ? facialExpressionSVG(c, faceData) : ''}
     </g>`;
 }
 
@@ -616,18 +663,18 @@ let container = null;
 let seq = [], playing = false, paused = false;
 let fi = 0, fAcc = 0, spd = 1;
 let rafId = null, lastT = 0;
-let prevLandmarks = null;
+let prevFrame = null;  // holistic frame: {leftHand, rightHand, face}
 let _onFrame = null, _onDone = null;
 
 // --- Minimum-jerk trajectory (from Avatars.md research) ---
-// 5th-order polynomial: creates bell-shaped velocity profile
-// for natural-looking acceleration/deceleration.
 function minimumJerk(t) {
   return 10 * t * t * t - 15 * t * t * t * t + 6 * t * t * t * t * t;
 }
 
-function lerpPose(a, b, t) {
+// Interpolate a single hand landmark array
+function _lerpHand(a, b, t) {
   if (!a) return b;
+  if (!b) return a;
   return b.map((lm, i) => [
     a[i][0] * (1 - t) + lm[0] * t,
     a[i][1] * (1 - t) + lm[1] * t,
@@ -635,23 +682,72 @@ function lerpPose(a, b, t) {
   ]);
 }
 
-// --- Render ---
-function render(landmarks) {
+// Interpolate a holistic frame
+function lerpFrame(a, b, t) {
+  if (!a) return b;
+  return {
+    leftHand: _lerpHand(a.leftHand, b.leftHand, t),
+    rightHand: _lerpHand(a.rightHand, b.rightHand, t),
+    face: _lerpHand(a.face, b.face, t),  // same lerp logic works for face points
+  };
+}
+
+// --- Render (holistic frame) ---
+function render(frame) {
   if (!container) return;
   const c = CHARS[charId];
-  const wrist = landmarks ? lmToSVG(landmarks[0]) : null;
-  const hasHands = landmarks && landmarks.length >= 21;
+
+  // Extract hands from frame (support legacy and holistic)
+  let leftHand = null, rightHand = null, faceData = null;
+
+  if (frame) {
+    if (frame.leftHand || frame.rightHand) {
+      // Holistic format
+      leftHand = frame.leftHand;
+      rightHand = frame.rightHand;
+      faceData = frame.face;
+    } else if (Array.isArray(frame) && frame.length >= 21) {
+      // Legacy single-hand format
+      rightHand = frame;
+    }
+  }
+
+  const leftWrist = leftHand ? lmToSVG(leftHand[0]) : null;
+  const rightWrist = rightHand ? lmToSVG(rightHand[0]) : null;
+
+  // Build arm + hand SVG
+  let armHandSVG = '';
+  // Left arm: connected to left hand if available
+  armHandSVG += armSVG(c, 'L', leftWrist);
+  // Right arm: connected to right hand if available
+  armHandSVG += armSVG(c, 'R', rightWrist);
+
+  // Render hands
+  if (leftHand) {
+    armHandSVG += handSVG(c, leftHand);
+  } else if (!rightHand) {
+    armHandSVG += idleHandSVG(c, 'L');
+  }
+
+  if (rightHand) {
+    armHandSVG += handSVG(c, rightHand);
+  } else if (!leftHand) {
+    armHandSVG += idleHandSVG(c, 'R');
+  }
+
+  // Add idle hands when neither hand is detected
+  if (!leftHand && !rightHand) {
+    armHandSVG = armSVG(c, 'L', null) + armSVG(c, 'R', null) +
+                 idleHandSVG(c, 'L') + idleHandSVG(c, 'R');
+  }
 
   container.innerHTML = `
     <svg viewBox="0 0 400 520" xmlns="http://www.w3.org/2000/svg"
          style="width:100%;height:100%;display:block;">
       ${defsSVG(c)}
       ${backgroundSVG()}
-      ${bodySVG(c)}
-      ${hasHands
-        ? `${armSVG(c, 'L', wrist)}${armSVG(c, 'R', null)}${handSVG(c, landmarks)}`
-        : `${armSVG(c, 'L', null)}${armSVG(c, 'R', null)}${idleHandSVG(c, 'L')}${idleHandSVG(c, 'R')}`
-      }
+      ${bodySVG(c, faceData)}
+      ${armHandSVG}
       <text x="200" y="508" text-anchor="middle" fill="rgba(255,255,255,0.18)"
             font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="600"
             letter-spacing="0.5">${c.name}</text>
@@ -666,7 +762,6 @@ function tick() {
   lastT = now;
   fAcc += dt * 30 * spd;
 
-  // Advance frame index
   while (fAcc >= 1 && fi < seq.length - 1) {
     fi++;
     fAcc -= 1;
@@ -674,24 +769,48 @@ function tick() {
   }
 
   if (fi >= seq.length - 1) {
-    prevLandmarks = seq[seq.length - 1];
-    render(prevLandmarks);
+    prevFrame = seq[seq.length - 1];
+    render(prevFrame);
     playing = false;
     if (_onDone) _onDone();
     return;
   }
 
-  // Sub-frame interpolation with minimum-jerk easing
   const t = Math.min(fAcc, 1);
   const eased = minimumJerk(t);
-  const blended = lerpPose(seq[fi], seq[fi + 1], eased);
+  const blended = lerpFrame(seq[fi], seq[fi + 1], eased);
 
-  // Apply biomechanical finger constraints
-  const constrained = applyFingerConstraints(blended);
-  prevLandmarks = constrained;
-  render(constrained);
+  // Apply biomechanical finger constraints to both hands
+  if (blended.leftHand) blended.leftHand = applyFingerConstraints(blended.leftHand);
+  if (blended.rightHand) blended.rightHand = applyFingerConstraints(blended.rightHand);
+
+  prevFrame = blended;
+  render(blended);
 
   rafId = requestAnimationFrame(tick);
+}
+
+// --- Frame format helpers ---
+// Normalize any frame to holistic format {leftHand, rightHand, face}
+function _toHolisticFrame(fr) {
+  if (!fr) return null;
+  // Already holistic
+  if (fr.leftHand !== undefined || fr.rightHand !== undefined) {
+    return { leftHand: fr.leftHand || null, rightHand: fr.rightHand || null, face: fr.face || null };
+  }
+  // Legacy: array of 21 landmarks → treat as right hand (dominant)
+  if (Array.isArray(fr) && fr.length >= 21) {
+    // Check if it's wrapped: [[21 lms], ...]
+    if (Array.isArray(fr[0]) && fr[0].length === 3) {
+      return { leftHand: null, rightHand: fr, face: null };
+    }
+    // Maybe double-wrapped: [[[x,y,z],...21]]
+    if (Array.isArray(fr[0]) && Array.isArray(fr[0][0]) && fr[0][0].length === 3 && fr[0].length >= 21) {
+      return { leftHand: null, rightHand: fr[0], face: null };
+    }
+    return { leftHand: null, rightHand: fr, face: null };
+  }
+  return null;
 }
 
 // --- Public API ---
@@ -700,7 +819,7 @@ export function getCharacters() {
 }
 
 export function setCharacter(id) {
-  if (CHARS[id]) { charId = id; render(prevLandmarks); }
+  if (CHARS[id]) { charId = id; render(prevFrame); }
 }
 
 export function getCurrentCharacter() { return charId; }
@@ -711,18 +830,15 @@ export function initAvatar(el) {
 }
 
 export function playSign(landmarks, speed = 1, onFrame = null, onDone = null) {
+  // Parse frames: support both legacy and holistic formats
   seq = (landmarks || [])
-    .map(fr => (Array.isArray(fr?.[0]) && fr[0].length === 3) ? fr[0] : fr)
-    .filter(f => Array.isArray(f) && f.length >= 21);
-
-  if (!seq.length) {
-    seq = (landmarks || []).filter(f => Array.isArray(f) && f.length >= 21);
-  }
+    .map(fr => _toHolisticFrame(fr))
+    .filter(f => f !== null && (f.leftHand || f.rightHand));
 
   if (!seq.length) return false;
   spd = speed;
   fi = 0; fAcc = 0;
-  prevLandmarks = null;
+  prevFrame = null;
   playing = true; paused = false;
   _onFrame = onFrame; _onDone = onDone;
   lastT = performance.now();
@@ -738,7 +854,7 @@ export function togglePause() {
 }
 
 export function replay() {
-  fi = 0; fAcc = 0; prevLandmarks = null;
+  fi = 0; fAcc = 0; prevFrame = null;
   paused = false; playing = true;
   lastT = performance.now();
   if (rafId) cancelAnimationFrame(rafId);

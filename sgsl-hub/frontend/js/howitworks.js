@@ -28,8 +28,8 @@ export function initHowItWorks() {
         </div>
         <h3>1. Camera Capture</h3>
         <p>Your webcam captures video at ~30 frames per second. Each frame is sent to
-           <strong>MediaPipe Hands</strong>, a hand-tracking AI by Google that runs
-           directly in your browser.</p>
+           <strong>MediaPipe Holistic</strong>, a tracking AI by Google that detects
+           both hands, face, and body pose — all directly in your browser.</p>
       </div>
 
       <div class="hiw-arrow">
