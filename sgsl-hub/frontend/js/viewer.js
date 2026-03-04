@@ -7,8 +7,9 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { fetchSigns, fetchSign } from './api.js';
-import { setStatus, viewMode } from './app.js';
+import { fetchSigns, fetchSign, deleteSign } from './api.js';
+import { setStatus, viewMode, toast } from './app.js';
+import { isLoggedIn } from './auth.js';
 import { playSign as avatarPlay, togglePause as avatarToggle, replay as avatarReplay, setSpeed as avatarSetSpeed } from './avatar.js';
 
 const BONES = [
@@ -342,19 +343,40 @@ async function loadLibrary() {
         return;
       }
 
+      const loggedIn = isLoggedIn();
       el.innerHTML = filtered.map(s =>
         `<div class="sign-library-item" data-label="${esc(s.label)}">
-          <span>${esc(s.label)}</span>
-          <span class="sign-count">${s.count}</span>
+          <span class="sign-label-text">${esc(s.label)}</span>
+          <span class="sign-item-actions">
+            <span class="sign-count">${s.count}</span>
+            ${loggedIn ? `<button class="sign-delete-btn" data-label="${esc(s.label)}" title="Delete sign">&times;</button>` : ''}
+          </span>
         </div>`
       ).join('');
 
       el.querySelectorAll('.sign-library-item').forEach(item => {
-        item.addEventListener('click', () => {
+        item.addEventListener('click', (e) => {
+          if (e.target.closest('.sign-delete-btn')) return;
           el.querySelectorAll('.sign-library-item').forEach(i => i.classList.remove('active'));
           item.classList.add('active');
           searchInput.value = item.dataset.label;
           playLabel(item.dataset.label);
+        });
+      });
+
+      el.querySelectorAll('.sign-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const label = btn.dataset.label;
+          if (!confirm(`Delete all recordings for "${label}"?`)) return;
+          try {
+            await deleteSign(label);
+            toast(`Deleted "${label}"`, 'success');
+            signs.splice(signs.findIndex(s => s.label === label), 1);
+            render(searchInput.value.trim());
+          } catch (err) {
+            toast(err.message, 'error');
+          }
         });
       });
     }

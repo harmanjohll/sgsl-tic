@@ -46,6 +46,15 @@ export async function recognize(landmarks) {
   return data;
 }
 
+export async function deleteSign(label) {
+  const res = await fetch(`${BASE}/api/sign/${encodeURIComponent(label)}`, {
+    method: 'DELETE',
+  });
+  const data = await safeJSON(res);
+  if (!res.ok) throw new Error(data.detail || 'Delete failed');
+  return data;
+}
+
 export async function login(email) {
   const res = await fetch(`${BASE}/api/auth/login`, {
     method: 'POST',

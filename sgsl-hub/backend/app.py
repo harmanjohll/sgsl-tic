@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from db.database import (
     save_sign, get_all_labels, get_sign_by_label,
     get_all_signs_with_features, update_sign_status, get_pending_signs,
+    delete_sign_by_label,
 )
 from ml.recognizer import (
     extract_sequence_features,
@@ -93,6 +94,15 @@ def get_sign(label: str):
     if not results:
         raise HTTPException(404, f'No sign found for "{label}"')
     return results[0]
+
+
+@app.delete("/api/sign/{label}")
+def delete_sign(label: str):
+    count = delete_sign_by_label(label)
+    if count == 0:
+        raise HTTPException(404, f'No sign found for "{label}"')
+    _retrain_classifier()
+    return {"status": "ok", "deleted": count}
 
 
 @app.post("/api/contribute")

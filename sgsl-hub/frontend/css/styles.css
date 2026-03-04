@@ -430,12 +430,48 @@ input::placeholder { color: var(--text-3); }
 .sign-library-item:last-child { border-bottom: none; }
 .sign-library-item:hover { background: var(--primary-bg); }
 .sign-library-item.active { background: var(--primary-bg); color: var(--primary); font-weight: 700; }
+.sign-label-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sign-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
 .sign-count {
   font-size: 0.7rem;
   color: var(--text-3);
   background: var(--bg);
   padding: 0.1rem 0.45rem;
   border-radius: var(--r-full);
+}
+.sign-delete-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: var(--ease);
+  padding: 0;
+}
+.sign-library-item:hover .sign-delete-btn {
+  display: flex;
+}
+.sign-delete-btn:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 /* 3D viewer */
