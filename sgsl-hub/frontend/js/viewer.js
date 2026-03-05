@@ -11,7 +11,9 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { fetchSigns, fetchSign, deleteSign } from './api.js';
 import { setStatus, viewMode, toast } from './app.js';
 import { isLoggedIn } from './auth.js';
-import { playSign as avatarPlay, togglePause as avatarToggle, replay as avatarReplay, setSpeed as avatarSetSpeed } from './avatar.js';
+import { HumanoidAvatar } from './humanoid.js';
+
+let humanoid = null;
 
 const BONES = [
   [0,1],[1,2],[2,3],[3,4],
@@ -323,19 +325,22 @@ async function playLabel(label) {
     paused = false;
     playing = true;
 
-    // Also play on avatar
+    // Also play on humanoid avatar
     const prog = document.getElementById('tts-progress');
-    avatarPlay(data.landmarks, speed, (fi, total) => {
-      if (prog && viewMode === 'avatar') prog.style.width = `${(fi / total) * 100}%`;
-      const fiEl = document.getElementById('frame-info');
-      if (fiEl && viewMode === 'avatar') fiEl.textContent = `${fi} / ${total}`;
-    }, () => {
-      if (viewMode === 'avatar') {
-        const pauseBtn = document.getElementById('pause-btn');
-        if (pauseBtn) pauseBtn.textContent = 'Pause';
-        setStatus(statusEl, 'Playback complete.', 'success');
-      }
-    });
+    if (humanoid) {
+      humanoid.setSpeed(speed);
+      humanoid.playSequence(data.landmarks, speed, (fi, total) => {
+        if (prog && viewMode === 'avatar') prog.style.width = `${(fi / total) * 100}%`;
+        const fiEl = document.getElementById('frame-info');
+        if (fiEl && viewMode === 'avatar') fiEl.textContent = `${fi} / ${total}`;
+      }, () => {
+        if (viewMode === 'avatar') {
+          const pauseBtn = document.getElementById('pause-btn');
+          if (pauseBtn) pauseBtn.textContent = 'Pause';
+          setStatus(statusEl, 'Playback complete.', 'success');
+        }
+      });
+    }
 
     const pauseBtn = document.getElementById('pause-btn');
     if (pauseBtn) pauseBtn.textContent = 'Pause';
@@ -419,6 +424,11 @@ export function initViewer() {
     loadLibrary();
   }
 
+  // Initialize humanoid 3D avatar in the avatar container
+  if (!humanoid) {
+    humanoid = new HumanoidAvatar(document.getElementById('avatar-container'));
+  }
+
   setStatus(document.getElementById('tts-status'), 'Select a sign from the library.', 'info');
 
   document.getElementById('tts-search').addEventListener('keydown', e => {
@@ -435,7 +445,7 @@ export function initViewer() {
       document.getElementById('pause-btn').textContent = 'Pause';
       const prog = document.getElementById('tts-progress');
       if (prog) prog.style.width = '0%';
-      avatarReplay();
+      if (humanoid) humanoid.replay();
     }
   });
 
@@ -443,7 +453,7 @@ export function initViewer() {
     if (!playing && !paused) return;
     paused = !paused;
     document.getElementById('pause-btn').textContent = paused ? 'Resume' : 'Pause';
-    avatarToggle();
+    if (humanoid) humanoid.togglePause();
   });
 
   const slider = document.getElementById('speed-slider');
@@ -451,8 +461,11 @@ export function initViewer() {
   slider?.addEventListener('input', () => {
     speed = parseFloat(slider.value);
     sval.textContent = `${speed}x`;
-    avatarSetSpeed(speed);
+    if (humanoid) humanoid.setSpeed(speed);
   });
 }
+
+export function getHumanoid() { return humanoid; }
+export function setHumanoidCharacter(id) { if (humanoid) humanoid.setCharacter(id); }
 
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
