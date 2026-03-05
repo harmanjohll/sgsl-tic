@@ -57,32 +57,44 @@ const FINGERS = [
 // --- Coordinate mapping ---
 // Avatar reference points (SVG coords)
 const AVATAR_NOSE = { x: 200, y: 116 };
-const AVATAR_LEFT_EYE = { x: 180, y: 84 };
-const AVATAR_RIGHT_EYE = { x: 220, y: 84 };
 const AVATAR_EYE_DIST = 40; // inter-eye distance in SVG px
 
-// Face-relative mapping: anchors hand position to avatar's face
-// Uses face nose as origin, inter-eye distance as scale unit
-function lmToSVG(lm, faceAnchor) {
+// Fixed hand rendering scale: SVG pixels per normalized landmark unit.
+// Tuned so hands look proportional to the avatar body regardless of camera distance.
+const HAND_SCALE = 320;
+
+// Convert hand landmarks to SVG coordinates.
+// POSITION: wrist is placed face-relative (proportional to inter-eye distance).
+// SHAPE: all other joints are placed relative to wrist at FIXED scale,
+// so hand size stays consistent no matter how far from the camera.
+function handToSVG(landmarks, faceAnchor) {
+  if (!landmarks || landmarks.length < 21) return null;
+
+  const wrist = landmarks[0];
+  let wristSVG;
+
   if (faceAnchor) {
-    // Face-relative: map hand position proportionally
-    const scale = AVATAR_EYE_DIST / (faceAnchor.eyeDist || 0.08);
-    return {
-      x: AVATAR_NOSE.x + ((1 - lm[0]) - (1 - faceAnchor.nose[0])) * scale,
-      y: AVATAR_NOSE.y + (lm[1] - faceAnchor.nose[1]) * scale,
+    const posScale = AVATAR_EYE_DIST / (faceAnchor.eyeDist || 0.08);
+    wristSVG = {
+      x: AVATAR_NOSE.x + ((1 - wrist[0]) - (1 - faceAnchor.nose[0])) * posScale,
+      y: AVATAR_NOSE.y + (wrist[1] - faceAnchor.nose[1]) * posScale,
     };
+  } else {
+    wristSVG = { x: 60 + (1 - wrist[0]) * 280, y: 100 + wrist[1] * 280 };
   }
-  // Fallback: absolute mapping (legacy)
-  return { x: 60 + (1 - lm[0]) * 280, y: 100 + lm[1] * 280 };
+
+  return landmarks.map(lm => ({
+    x: wristSVG.x + ((1 - lm[0]) - (1 - wrist[0])) * HAND_SCALE,
+    y: wristSVG.y + (lm[1] - wrist[1]) * HAND_SCALE,
+  }));
 }
 
 // Extract face anchor from holistic face data (32-point subset)
-// Indices: 10=left eye outer, 14=right eye outer, 18=nose tip
 function extractFaceAnchor(faceData) {
   if (!faceData || faceData.length < 32) return null;
-  const nose = faceData[18]; // _FACE_NOSE[0]
-  const leftEye = faceData[10]; // _FACE_LEFT_EYE[0]
-  const rightEye = faceData[14]; // _FACE_RIGHT_EYE[0]
+  const nose = faceData[18];
+  const leftEye = faceData[10];
+  const rightEye = faceData[14];
   const dx = leftEye[0] - rightEye[0];
   const dy = leftEye[1] - rightEye[1];
   const eyeDist = Math.sqrt(dx * dx + dy * dy);
@@ -582,98 +594,129 @@ function applyFingerConstraints(landmarks) {
   return out;
 }
 
-// --- Animated hand: clearly defined fingers with outlines ---
-// Each finger is drawn as a distinct, outlined shape so sign hand shapes are readable
+// --- Animated hand rendering ---
+// Each finger is drawn as a single continuous tapered outline (no segment gaps).
+// Uses handToSVG for consistent sizing: wrist face-relative, shape at fixed scale.
+
+// Perpendicular unit vector for a segment
+function _perp(ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  return { px: -dy / len, py: dx / len };
+}
+
+// Draw one finger as a single filled outline path: no gaps between segments.
+// Walks down the left side, caps the tip with an arc, walks back up the right side.
+function _fingerPath(pts, indices, widths) {
+  const n = indices.length;
+  // Compute perpendiculars at each joint
+  const perps = [];
+  for (let i = 0; i < n; i++) {
+    let px, py;
+    if (i === 0) {
+      ({ px, py } = _perp(pts[indices[0]].x, pts[indices[0]].y, pts[indices[1]].x, pts[indices[1]].y));
+    } else if (i === n - 1) {
+      ({ px, py } = _perp(pts[indices[n - 2]].x, pts[indices[n - 2]].y, pts[indices[n - 1]].x, pts[indices[n - 1]].y));
+    } else {
+      // Average perpendiculars of incoming and outgoing segments for smooth join
+      const p1 = _perp(pts[indices[i - 1]].x, pts[indices[i - 1]].y, pts[indices[i]].x, pts[indices[i]].y);
+      const p2 = _perp(pts[indices[i]].x, pts[indices[i]].y, pts[indices[i + 1]].x, pts[indices[i + 1]].y);
+      px = (p1.px + p2.px) / 2;
+      py = (p1.py + p2.py) / 2;
+      const plen = Math.sqrt(px * px + py * py) || 1;
+      px /= plen;
+      py /= plen;
+    }
+    perps.push({ px, py });
+  }
+
+  // Left side (base → tip)
+  let d = `M${(pts[indices[0]].x + perps[0].px * widths[0]).toFixed(1)},${(pts[indices[0]].y + perps[0].py * widths[0]).toFixed(1)}`;
+  for (let i = 1; i < n; i++) {
+    d += ` L${(pts[indices[i]].x + perps[i].px * widths[i]).toFixed(1)},${(pts[indices[i]].y + perps[i].py * widths[i]).toFixed(1)}`;
+  }
+
+  // Tip arc
+  const tipR = widths[n - 1];
+  d += ` A${tipR.toFixed(1)},${tipR.toFixed(1)} 0 0 1 ${(pts[indices[n - 1]].x - perps[n - 1].px * widths[n - 1]).toFixed(1)},${(pts[indices[n - 1]].y - perps[n - 1].py * widths[n - 1]).toFixed(1)}`;
+
+  // Right side (tip → base)
+  for (let i = n - 2; i >= 0; i--) {
+    d += ` L${(pts[indices[i]].x - perps[i].px * widths[i]).toFixed(1)},${(pts[indices[i]].y - perps[i].py * widths[i]).toFixed(1)}`;
+  }
+
+  // Base arc to close
+  const baseR = widths[0];
+  d += ` A${baseR.toFixed(1)},${baseR.toFixed(1)} 0 0 1 ${(pts[indices[0]].x + perps[0].px * widths[0]).toFixed(1)},${(pts[indices[0]].y + perps[0].py * widths[0]).toFixed(1)} Z`;
+
+  return d;
+}
+
 function handSVG(c, landmarks, faceAnchor) {
   if (!landmarks || landmarks.length < 21) return '';
-  const pts = landmarks.map(lm => lmToSVG(lm, faceAnchor));
+  const pts = handToSVG(landmarks, faceAnchor);
+  if (!pts) return '';
   let s = '<g class="signing-hand" filter="url(#hand-shadow)">';
 
-  // Palm — filled shape with outline
+  // Palm — filled shape connecting base knuckles
   const palmIdx = [0, 1, 5, 9, 13, 17];
   const palmPath = palmIdx.map((i, idx) =>
-    `${idx === 0 ? 'M' : 'L'}${pts[i].x},${pts[i].y}`
+    `${idx === 0 ? 'M' : 'L'}${pts[i].x.toFixed(1)},${pts[i].y.toFixed(1)}`
   ).join(' ') + ' Z';
-  s += `<path d="${palmPath}" fill="${c.skin}" stroke="none" opacity="0.95"/>`;
-  // Palm outline (on top, thin)
-  s += `<path d="${palmPath}" fill="none" stroke="${c.skinDk}" stroke-width="0.5" opacity="0.15"/>`;
+  s += `<path d="${palmPath}" fill="${c.skin}" stroke="none"/>`;
 
-  // Fingers — each segment has a distinct outlined rounded-rect shape
-  // Widths taper: base=10, mid=8, distal=6; thumb is slightly wider
-  const fingerWidths = {
-    0: [10, 9, 8, 7],   // thumb
-    1: [9, 8, 7, 6],    // index
-    2: [9, 8, 7, 6],    // middle
-    3: [8, 7, 6, 5.5],  // ring
-    4: [7, 6, 5.5, 5],  // pinky
-  };
-
+  // Fill between finger bases to prevent gaps between palm and fingers
   for (let fi = 0; fi < FINGERS.length; fi++) {
+    const base = FINGERS[fi][0];
+    s += `<circle cx="${pts[base].x.toFixed(1)}" cy="${pts[base].y.toFixed(1)}" r="6" fill="${c.skin}" stroke="none"/>`;
+  }
+
+  // Finger half-widths at each joint (in SVG pixels — fixed, not dependent on scale)
+  const fingerWidths = [
+    [5.5, 4.5, 4.0, 3.5],  // thumb
+    [5.0, 4.0, 3.5, 3.0],  // index
+    [5.0, 4.0, 3.5, 3.0],  // middle
+    [4.5, 3.5, 3.0, 2.8],  // ring
+    [4.0, 3.0, 2.8, 2.5],  // pinky
+  ];
+
+  // Draw each finger as a single continuous outline — no segment gaps
+  for (let fi = 0; fi < FINGERS.length; fi++) {
+    const path = _fingerPath(pts, FINGERS[fi], fingerWidths[fi]);
+    s += `<path d="${path}" fill="${c.skin}" stroke="none"/>`;
+
+    // Soft knuckle creases at PIP and DIP joints
     const finger = FINGERS[fi];
-    const widths = fingerWidths[fi];
-
-    for (let i = 0; i < finger.length - 1; i++) {
-      const a = finger[i], b = finger[i + 1];
-      const wA = widths[i] / 2;
-      const wB = widths[i + 1] / 2;
-      const dx = pts[b].x - pts[a].x;
-      const dy = pts[b].y - pts[a].y;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      // Perpendicular unit vector
-      const px = -dy / len, py = dx / len;
-
-      // Draw a tapered quad with rounded ends for each segment
-      const x1 = pts[a].x + px * wA, y1 = pts[a].y + py * wA;
-      const x2 = pts[a].x - px * wA, y2 = pts[a].y - py * wA;
-      const x3 = pts[b].x - px * wB, y3 = pts[b].y - py * wB;
-      const x4 = pts[b].x + px * wB, y4 = pts[b].y + py * wB;
-
-      s += `<path d="M${x1.toFixed(1)},${y1.toFixed(1)} L${x4.toFixed(1)},${y4.toFixed(1)}
-                     A${wB.toFixed(1)},${wB.toFixed(1)} 0 0 1 ${x3.toFixed(1)},${y3.toFixed(1)}
-                     L${x2.toFixed(1)},${y2.toFixed(1)}
-                     A${wA.toFixed(1)},${wA.toFixed(1)} 0 0 1 ${x1.toFixed(1)},${y1.toFixed(1)} Z"
-            fill="${c.skin}" stroke="none"/>`;
-
-      // Joint cover circle — fills the seam between adjacent segments
-      if (i > 0) {
-        s += `<circle cx="${pts[a].x.toFixed(1)}" cy="${pts[a].y.toFixed(1)}" r="${wA.toFixed(1)}"
-              fill="${c.skin}" stroke="none"/>`;
-      }
-
-      // Knuckle crease at each joint (except fingertip)
-      if (i < finger.length - 2) {
-        s += `<line x1="${(pts[b].x + px * wB * 0.6).toFixed(1)}" y1="${(pts[b].y + py * wB * 0.6).toFixed(1)}"
-                    x2="${(pts[b].x - px * wB * 0.6).toFixed(1)}" y2="${(pts[b].y - py * wB * 0.6).toFixed(1)}"
-              stroke="${c.skinDk}" stroke-width="0.6" opacity="0.2"/>`;
-      }
+    for (let ji = 1; ji < finger.length - 1; ji++) {
+      const j = finger[ji];
+      const { px, py } = _perp(pts[finger[ji - 1]].x, pts[finger[ji - 1]].y, pts[finger[ji]].x, pts[finger[ji]].y);
+      const w = fingerWidths[fi][ji] * 0.6;
+      s += `<line x1="${(pts[j].x + px * w).toFixed(1)}" y1="${(pts[j].y + py * w).toFixed(1)}"
+                  x2="${(pts[j].x - px * w).toFixed(1)}" y2="${(pts[j].y - py * w).toFixed(1)}"
+            stroke="${c.skinDk}" stroke-width="0.5" opacity="0.15" stroke-linecap="round"/>`;
     }
 
-    // Rounded fingertip
+    // Fingernail on extended fingers
     const tip = finger[finger.length - 1];
     const prev = finger[finger.length - 2];
-    const dx = pts[tip].x - pts[prev].x;
-    const dy = pts[tip].y - pts[prev].y;
-    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
-    const tipW = widths[widths.length - 1] / 2;
-    s += `<ellipse cx="${pts[tip].x.toFixed(1)}" cy="${pts[tip].y.toFixed(1)}"
-          rx="${(tipW + 1).toFixed(1)}" ry="${tipW.toFixed(1)}"
-          fill="${c.skin}" stroke="${c.skinDk}" stroke-width="0.5"
-          transform="rotate(${angle.toFixed(1)},${pts[tip].x.toFixed(1)},${pts[tip].y.toFixed(1)})"/>`;
-
-    // Fingernail on extended fingers (tiny crescent near tip)
+    const dx = pts[tip].x - pts[prev].x, dy = pts[tip].y - pts[prev].y;
     const segLen = Math.sqrt(dx * dx + dy * dy);
-    if (segLen > 8) {
-      const nx = dx / (segLen || 1), ny = dy / (segLen || 1);
-      s += `<path d="M${(pts[tip].x - ny * tipW * 0.5).toFixed(1)},${(pts[tip].y + nx * tipW * 0.5).toFixed(1)}
-                     Q${(pts[tip].x + nx * 3).toFixed(1)},${pts[tip].y.toFixed(1)}
-                      ${(pts[tip].x + ny * tipW * 0.5).toFixed(1)},${(pts[tip].y - nx * tipW * 0.5).toFixed(1)}"
-            stroke="${c.skinDk}" stroke-width="0.4" fill="none" opacity="0.2"/>`;
+    if (segLen > 6) {
+      const nx = dx / segLen, ny = dy / segLen;
+      const tw = fingerWidths[fi][finger.length - 1] * 0.5;
+      s += `<path d="M${(pts[tip].x - ny * tw).toFixed(1)},${(pts[tip].y + nx * tw).toFixed(1)}
+                     Q${(pts[tip].x + nx * 2.5).toFixed(1)},${pts[tip].y.toFixed(1)}
+                      ${(pts[tip].x + ny * tw).toFixed(1)},${(pts[tip].y - nx * tw).toFixed(1)}"
+            stroke="${c.skinDk}" stroke-width="0.4" fill="none" opacity="0.15"/>`;
     }
   }
 
-  // Wrist
-  s += `<ellipse cx="${pts[0].x.toFixed(1)}" cy="${pts[0].y.toFixed(1)}" rx="10" ry="8"
-        fill="${c.skin}" stroke="${c.skinDk}" stroke-width="0.5"/>`;
+  // Subtle palm outline on top of everything
+  s += `<path d="${palmPath}" fill="none" stroke="${c.skinDk}" stroke-width="0.4" opacity="0.1"/>`;
+
+  // Wrist connector
+  s += `<ellipse cx="${pts[0].x.toFixed(1)}" cy="${pts[0].y.toFixed(1)}" rx="9" ry="7"
+        fill="${c.skin}" stroke="none"/>`;
 
   s += '</g>';
   return s;
@@ -803,8 +846,11 @@ function render(frame) {
   // Compute face anchor for proportional mapping
   const faceAnchor = extractFaceAnchor(faceData);
 
-  const leftWrist = leftHand ? lmToSVG(leftHand[0], faceAnchor) : null;
-  const rightWrist = rightHand ? lmToSVG(rightHand[0], faceAnchor) : null;
+  // Get wrist SVG positions for arm connections (uses handToSVG for consistency)
+  const leftPts = leftHand ? handToSVG(leftHand, faceAnchor) : null;
+  const rightPts = rightHand ? handToSVG(rightHand, faceAnchor) : null;
+  const leftWrist = leftPts ? leftPts[0] : null;
+  const rightWrist = rightPts ? rightPts[0] : null;
 
   // Build arm + hand SVG
   let armHandSVG = '';
