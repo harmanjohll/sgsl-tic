@@ -6,10 +6,9 @@
    ============================================================ */
 
 import { initContribute } from './contribute.js';
-import { initViewer } from './viewer.js';
+import { initViewer, setHumanoidCharacter } from './viewer.js';
 import { initRecognize } from './recognize.js';
 import { initHowItWorks } from './howitworks.js';
-import { initAvatar, setCharacter } from './avatar.js';
 import { isLoggedIn, getEmail, saveAuth, clearAuth } from './auth.js';
 import { login as apiLogin } from './api.js';
 
@@ -153,7 +152,6 @@ function activateTab(tabId) {
   }
   if (sectionId === 'text-to-sign' && !inited.viewer) {
     inited.viewer = true;
-    initAvatar('avatar-container');
     initViewer();
     initViewToggle();
   }
@@ -199,7 +197,7 @@ function initViewToggle() {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.avatar-pick').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      setCharacter(btn.dataset.avatar);
+      setHumanoidCharacter(btn.dataset.avatar);
     });
   });
 
