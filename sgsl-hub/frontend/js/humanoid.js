@@ -368,16 +368,32 @@ export class HumanoidAvatar {
       }
     });
 
-    // Position model at origin
+    // Position model at origin, normalize scale
     const box = new THREE.Box3().setFromObject(this.model);
+    const rawHeight = box.max.y - box.min.y;
+
+    // Normalize model to ~1.7 units tall (human height in meters)
+    // This handles models exported in mm, cm, or other scales
+    const TARGET_HEIGHT = 1.7;
+    if (rawHeight > 10 || rawHeight < 0.1) {
+      const s = TARGET_HEIGHT / rawHeight;
+      this.model.scale.set(s, s, s);
+      box.setFromObject(this.model); // recompute after scale
+    }
+
     const height = box.max.y - box.min.y;
     // Center horizontally, put feet on floor
     this.model.position.y = -box.min.y;
     this.model.position.x = -(box.max.x + box.min.x) / 2;
+    this.model.position.z = -(box.max.z + box.min.z) / 2;
 
     // Adjust camera based on model height
-    this.camera.position.set(0, height * 0.55, height * 1.6);
+    const camDist = Math.max(height * 1.6, 2.0);
+    this.camera.position.set(0, height * 0.55, camDist);
     this.camera.lookAt(0, height * 0.45, 0);
+    this.camera.near = camDist * 0.01;
+    this.camera.far = camDist * 10;
+    this.camera.updateProjectionMatrix();
 
     this.scene.add(this.model);
 
