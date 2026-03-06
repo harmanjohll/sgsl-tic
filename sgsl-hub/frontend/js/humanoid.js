@@ -1,34 +1,17 @@
 /* ============================================================
-   SgSL Hub — 3D Humanoid Avatar for Sign Language Production
+   SgSL Hub — Stylized 3D Signing Avatar
    ============================================================
-   Production-grade biomechanically-driven signing avatar with:
+   Toon-shaded humanoid with cel outlines, large expressive
+   features, and biomechanically-driven animation.
 
-   Layer A — Dual Quaternion Skinning (DQS)
-     Custom vertex shader replaces Three.js default LBS with
-     dual-quaternion blending to prevent candy-wrapper collapse
-     at wrist/elbow during high-velocity SgSL transitions.
+   Visual Style: Stylized/chibi — large head, expressive eyes,
+   visible hands. Toon shading with 3-step gradient + ink outlines.
 
-   Layer B — Minimum-Jerk Trajectory Solver
-     Full 5th-order polynomial: x(t) = a₀+a₁t+a₂t²+a₃t³+a₄t⁴+a₅t⁵
-     Computes coefficients from boundary conditions (position,
-     velocity, acceleration at t=0 and t=T) so every joint move
-     has a bell-shaped velocity profile with zero acceleration
-     at start and end.
-
-   Layer C — Kinematic Coupling & Whole-Body Control
-     - θ_DIP = 2/3 × θ_PIP enforced on all non-thumb fingers
-     - Automated torso rotation ±0.5 rad based on wrist target
-       position within the signing space quadrants
-     - Spine tilt tracks hand elevation for natural reach support
-
-   FACS Facial Grammar
-     Maps MediaPipe face landmarks to Action Units:
-     AU1/AU2 (inner/outer brow raise), AU4 (brow lowerer),
-     AU25/AU26 (lips part / jaw drop) for grammatical markers
-     (questions, negation, emphasis).
-
-   Architecture: H-Anim skeletal hierarchy, procedural mesh,
-   22 DoF hand rig per hand, two-bone IK arm solver.
+   Biomechanical Layers (preserved):
+     A — Dual Quaternion Skinning vertex shader
+     B — 5th-order minimum-jerk trajectory solver
+     C — θ_DIP = 2/3 × θ_PIP coupling, ±0.5 rad WBC torso
+     FACS — AU1/2/4/25/26/20 facial grammar
    ============================================================ */
 
 import * as THREE from 'three';
@@ -37,46 +20,69 @@ import * as THREE from 'three';
 const CHARACTERS = {
   meiling: {
     name: 'Mei Ling',
-    skin: 0xF0C2A0, skinDk: 0xC99B78,
-    hair: 0x2A1A12, hairHi: 0x4A3428,
-    shirt: 0x7C3AED, shirtDk: 0x5B21B6,
-    pants: 0x2B2B42,
-    iris: 0x2C1810, sclera: 0xFFFFF0,
-    lip: 0xE08888,
-    brow: 0x3A2A20,
+    skin: 0xF5CCA0, skinDk: 0xD4A87A, skinLt: 0xFFE0C2,
+    hair: 0x1A0E08, hairHi: 0x3D2818,
+    shirt: 0x7C3AED, shirtLt: 0x9F5FFF,
+    pants: 0x2D2D4A, pantsLt: 0x3F3F60,
+    shoe: 0x1A1A2E,
+    iris: 0x4A2820, irisRing: 0x7A4838, sclera: 0xFFFFF5,
+    lip: 0xE88888, lipDk: 0xC06868,
+    brow: 0x2A1810,
+    outline: 0x1A0A05,
+    blush: 0xFFA0A0,
   },
   rajan: {
     name: 'Rajan',
-    skin: 0xC68642, skinDk: 0x8B5E34,
-    hair: 0x1A1A2E, hairHi: 0x2E2E48,
-    shirt: 0x2D6A4F, shirtDk: 0x1B4332,
-    pants: 0x2B2B42,
-    iris: 0x3E2723, sclera: 0xFFFFF0,
-    lip: 0x9E6B4A,
-    brow: 0x1A1A2E,
+    skin: 0xC68642, skinDk: 0x9E6830, skinLt: 0xDCA060,
+    hair: 0x0E0E1E, hairHi: 0x22223A,
+    shirt: 0x2D8A5F, shirtLt: 0x40B080,
+    pants: 0x2D2D4A, pantsLt: 0x3F3F60,
+    shoe: 0x1A1A2E,
+    iris: 0x2E1A10, irisRing: 0x4A3020, sclera: 0xFFFFF5,
+    lip: 0xA06848, lipDk: 0x805030,
+    brow: 0x0E0E1E,
+    outline: 0x0A0A0A,
+    blush: 0xD08060,
   },
 };
 
-// ─── Body proportions (world units, ~1.7 total height) ──────
-const B = {
-  headR: 0.105,
-  neckR: 0.035, neckH: 0.045,
-  chestW: 0.13, chestH: 0.18, chestD: 0.08,
-  waistW: 0.11, waistH: 0.10, waistD: 0.07,
-  shoulderSpan: 0.30,
-  upperArmLen: 0.24, upperArmR: 0.032,
-  foreArmLen: 0.22, foreArmR: 0.026,
-  palmW: 0.045, palmH: 0.06, palmD: 0.015,
-  fingerR: 0.007,
-  thumbSegs: [0.028, 0.024, 0.020],
-  indexSegs: [0.032, 0.022, 0.018],
-  middleSegs: [0.035, 0.025, 0.020],
-  ringSegs: [0.032, 0.022, 0.018],
-  pinkySegs: [0.026, 0.018, 0.015],
-  legR: 0.045, legH: 0.38,
+// ─── Proportions (stylized — larger head & hands) ───────────
+const P = {
+  // Head (large for expressiveness)
+  headR: 0.18,
+  headSquash: 0.92,   // slightly wide
+  headStretch: 1.08,  // slightly tall
+
+  // Neck
+  neckR: 0.05, neckH: 0.06,
+
+  // Torso
+  chestW: 0.22, chestH: 0.22, chestD: 0.14,
+  waistW: 0.18, waistH: 0.08, waistD: 0.12,
+
+  // Shoulders
+  shoulderSpan: 0.44,
+  shoulderR: 0.055,
+
+  // Arms
+  upperArmLen: 0.22, upperArmR: 0.042,
+  foreArmLen: 0.20,   foreArmR: 0.035,
+
+  // Hands (large for sign language visibility)
+  palmW: 0.065, palmH: 0.08, palmD: 0.025,
+  fingerR: 0.012,
+  thumbSegs:  [0.038, 0.032, 0.026],
+  indexSegs:  [0.042, 0.030, 0.024],
+  middleSegs: [0.046, 0.034, 0.026],
+  ringSegs:   [0.042, 0.030, 0.024],
+  pinkySegs:  [0.034, 0.024, 0.020],
+
+  // Legs
+  upperLegR: 0.06, upperLegH: 0.22,
+  lowerLegR: 0.05, lowerLegH: 0.20,
+  shoeW: 0.09, shoeH: 0.05, shoeD: 0.14,
 };
 
-// Finger indices in MediaPipe 21-landmark hand
 const FINGER_LANDMARKS = {
   thumb:  [1, 2, 3, 4],
   index:  [5, 6, 7, 8],
@@ -84,163 +90,128 @@ const FINGER_LANDMARKS = {
   ring:   [13, 14, 15, 16],
   pinky:  [17, 18, 19, 20],
 };
-
 const FINGER_NAMES = ['thumb', 'index', 'middle', 'ring', 'pinky'];
 
-// Finger base positions on the palm (relative to palm center)
 const FINGER_BASES = {
-  thumb:  { x: -0.038, y: -0.01, z: 0.01 },
-  index:  { x: -0.02,  y: 0.03,  z: 0.005 },
-  middle: { x: -0.005, y: 0.032, z: 0.005 },
-  ring:   { x: 0.01,   y: 0.03,  z: 0.005 },
-  pinky:  { x: 0.025,  y: 0.025, z: 0.005 },
+  thumb:  { x: -0.052, y: -0.01, z: 0.015 },
+  index:  { x: -0.028, y: 0.04,  z: 0.008 },
+  middle: { x: -0.007, y: 0.044, z: 0.008 },
+  ring:   { x: 0.014,  y: 0.04,  z: 0.008 },
+  pinky:  { x: 0.035,  y: 0.034, z: 0.008 },
 };
 
 
 // ═══════════════════════════════════════════════════════════════
-// LAYER A — Dual Quaternion Skinning (DQS) Shader
-// ═══════════════════════════════════════════════════════════════
-//
-// Three.js default skinning uses Linear Blend Skinning (LBS)
-// which causes volume loss ("candy wrapper") at twisted joints.
-// DQS represents each bone transform as a dual quaternion and
-// blends in dual-quaternion space, preserving volume.
+// Toon Rendering System
 // ═══════════════════════════════════════════════════════════════
 
-const DQS_VERTEX_PARS = /* glsl */ `
-  // Dual quaternion helper functions
-  // A dual quaternion is stored as two vec4: real (q0) and dual (qe)
+let _toonGradient = null;
 
-  // Convert a mat4 bone transform to a dual quaternion
-  // mat4 -> (rotation quaternion, translation dual part)
+function getToonGradient() {
+  if (_toonGradient) return _toonGradient;
+  // 4-step toon gradient: shadow → mid-shadow → lit → highlight
+  const data = new Uint8Array([
+    80, 80, 80, 255,     // deep shadow
+    160, 160, 160, 255,  // mid
+    220, 220, 220, 255,  // lit
+    255, 255, 255, 255,  // highlight
+  ]);
+  _toonGradient = new THREE.DataTexture(data, 4, 1, THREE.RGBAFormat);
+  _toonGradient.minFilter = THREE.NearestFilter;
+  _toonGradient.magFilter = THREE.NearestFilter;
+  _toonGradient.needsUpdate = true;
+  return _toonGradient;
+}
+
+function toonMat(color, opts = {}) {
+  return new THREE.MeshToonMaterial({
+    color,
+    gradientMap: getToonGradient(),
+    side: opts.side ?? THREE.FrontSide,
+    transparent: opts.transparent ?? false,
+    opacity: opts.opacity ?? 1,
+    ...opts,
+  });
+}
+
+/** Ink outline via inverted-hull method */
+function addOutline(parent, geometry, thickness, outlineColor) {
+  const mat = new THREE.MeshBasicMaterial({
+    color: outlineColor,
+    side: THREE.BackSide,
+  });
+  const outline = new THREE.Mesh(geometry, mat);
+  outline.scale.multiplyScalar(1 + thickness);
+  parent.add(outline);
+  return outline;
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// Layer A — DQS Shader (Dual Quaternion Skinning)
+// ═══════════════════════════════════════════════════════════════
+
+const DQS_PARS = /* glsl */ `
   vec4 mat4ToQuat(mat4 m) {
-    float trace = m[0][0] + m[1][1] + m[2][2];
+    float tr = m[0][0] + m[1][1] + m[2][2];
     vec4 q;
-    if (trace > 0.0) {
-      float s = 0.5 / sqrt(trace + 1.0);
-      q.w = 0.25 / s;
-      q.x = (m[2][1] - m[1][2]) * s;
-      q.y = (m[0][2] - m[2][0]) * s;
-      q.z = (m[1][0] - m[0][1]) * s;
+    if (tr > 0.0) {
+      float s = 0.5 / sqrt(tr + 1.0);
+      q = vec4((m[2][1]-m[1][2])*s, (m[0][2]-m[2][0])*s, (m[1][0]-m[0][1])*s, 0.25/s);
     } else if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) {
-      float s = 2.0 * sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]);
-      q.w = (m[2][1] - m[1][2]) / s;
-      q.x = 0.25 * s;
-      q.y = (m[0][1] + m[1][0]) / s;
-      q.z = (m[0][2] + m[2][0]) / s;
+      float s = 2.0*sqrt(1.0+m[0][0]-m[1][1]-m[2][2]);
+      q = vec4(0.25*s, (m[0][1]+m[1][0])/s, (m[0][2]+m[2][0])/s, (m[2][1]-m[1][2])/s);
     } else if (m[1][1] > m[2][2]) {
-      float s = 2.0 * sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]);
-      q.w = (m[0][2] - m[2][0]) / s;
-      q.x = (m[0][1] + m[1][0]) / s;
-      q.y = 0.25 * s;
-      q.z = (m[1][2] + m[2][1]) / s;
+      float s = 2.0*sqrt(1.0+m[1][1]-m[0][0]-m[2][2]);
+      q = vec4((m[0][1]+m[1][0])/s, 0.25*s, (m[1][2]+m[2][1])/s, (m[0][2]-m[2][0])/s);
     } else {
-      float s = 2.0 * sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]);
-      q.w = (m[1][0] - m[0][1]) / s;
-      q.x = (m[0][2] + m[2][0]) / s;
-      q.y = (m[1][2] + m[2][1]) / s;
-      q.z = 0.25 * s;
+      float s = 2.0*sqrt(1.0+m[2][2]-m[0][0]-m[1][1]);
+      q = vec4((m[0][2]+m[2][0])/s, (m[1][2]+m[2][1])/s, 0.25*s, (m[1][0]-m[0][1])/s);
     }
     return normalize(q);
   }
-
-  // Quaternion multiplication
-  vec4 quatMul(vec4 a, vec4 b) {
-    return vec4(
-      a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
-      a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-      a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
-      a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
-    );
+  vec4 qMul(vec4 a, vec4 b) {
+    return vec4(a.w*b.xyz + b.w*a.xyz + cross(a.xyz, b.xyz), a.w*b.w - dot(a.xyz, b.xyz));
   }
-
-  // Convert translation vector to dual quaternion dual part
-  vec4 translationToDual(vec4 q0, vec3 t) {
-    return 0.5 * quatMul(vec4(t, 0.0), q0);
+  vec4 tToDual(vec4 q, vec3 t) { return 0.5 * qMul(vec4(t, 0.0), q); }
+  vec3 dqPoint(vec4 r, vec4 d, vec3 p) {
+    float ln = length(r); r /= ln; d /= ln;
+    return p + 2.0*cross(r.xyz, cross(r.xyz, p) + r.w*p)
+         + 2.0*(r.w*d.xyz - d.w*r.xyz + cross(r.xyz, d.xyz));
   }
-
-  // Apply dual quaternion to a position
-  vec3 dqTransformPoint(vec4 q0, vec4 qe, vec3 p) {
-    // Normalize the dual quaternion
-    float len = length(q0);
-    q0 /= len;
-    qe /= len;
-
-    // Rotation: q0 * p * q0^-1
-    vec3 rotated = p + 2.0 * cross(q0.xyz, cross(q0.xyz, p) + q0.w * p);
-
-    // Translation: 2 * (qe * q0^*)
-    vec3 translation = 2.0 * (q0.w * qe.xyz - qe.w * q0.xyz + cross(q0.xyz, qe.xyz));
-
-    return rotated + translation;
-  }
-
-  // Apply dual quaternion to a normal (rotation only)
-  vec3 dqTransformNormal(vec4 q0, vec3 n) {
-    return n + 2.0 * cross(q0.xyz, cross(q0.xyz, n) + q0.w * n);
+  vec3 dqNorm(vec4 r, vec3 n) {
+    return n + 2.0*cross(r.xyz, cross(r.xyz, n) + r.w*n);
   }
 `;
 
-const DQS_SKINNING_VERTEX = /* glsl */ `
+const DQS_SKIN = /* glsl */ `
   #ifdef USE_SKINNING
-    // Get bone matrices
-    mat4 bm0 = bindMatrix * boneMatrices[int(skinIndex.x)] * bindMatrixInverse;
-    mat4 bm1 = bindMatrix * boneMatrices[int(skinIndex.y)] * bindMatrixInverse;
-    mat4 bm2 = bindMatrix * boneMatrices[int(skinIndex.z)] * bindMatrixInverse;
-    mat4 bm3 = bindMatrix * boneMatrices[int(skinIndex.w)] * bindMatrixInverse;
-
-    // Convert to dual quaternions
-    vec4 dq0_r = mat4ToQuat(bm0);
-    vec4 dq0_d = translationToDual(dq0_r, bm0[3].xyz);
-
-    vec4 dq1_r = mat4ToQuat(bm1);
-    vec4 dq1_d = translationToDual(dq1_r, bm1[3].xyz);
-
-    vec4 dq2_r = mat4ToQuat(bm2);
-    vec4 dq2_d = translationToDual(dq2_r, bm2[3].xyz);
-
-    vec4 dq3_r = mat4ToQuat(bm3);
-    vec4 dq3_d = translationToDual(dq3_r, bm3[3].xyz);
-
-    // Ensure shortest path (antipodality check)
-    if (dot(dq0_r, dq1_r) < 0.0) { dq1_r = -dq1_r; dq1_d = -dq1_d; }
-    if (dot(dq0_r, dq2_r) < 0.0) { dq2_r = -dq2_r; dq2_d = -dq2_d; }
-    if (dot(dq0_r, dq3_r) < 0.0) { dq3_r = -dq3_r; dq3_d = -dq3_d; }
-
-    // Weighted blend
-    vec4 blendR = skinWeight.x * dq0_r + skinWeight.y * dq1_r
-                + skinWeight.z * dq2_r + skinWeight.w * dq3_r;
-    vec4 blendD = skinWeight.x * dq0_d + skinWeight.y * dq1_d
-                + skinWeight.z * dq2_d + skinWeight.w * dq3_d;
-
-    // Apply DQS transform
-    vec3 skinned = dqTransformPoint(blendR, blendD, transformed);
-    transformed = skinned;
-
-    // Transform normal
-    objectNormal = dqTransformNormal(blendR, objectNormal);
+    mat4 bm0=bindMatrix*boneMatrices[int(skinIndex.x)]*bindMatrixInverse;
+    mat4 bm1=bindMatrix*boneMatrices[int(skinIndex.y)]*bindMatrixInverse;
+    mat4 bm2=bindMatrix*boneMatrices[int(skinIndex.z)]*bindMatrixInverse;
+    mat4 bm3=bindMatrix*boneMatrices[int(skinIndex.w)]*bindMatrixInverse;
+    vec4 r0=mat4ToQuat(bm0), d0=tToDual(r0,bm0[3].xyz);
+    vec4 r1=mat4ToQuat(bm1), d1=tToDual(r1,bm1[3].xyz);
+    vec4 r2=mat4ToQuat(bm2), d2=tToDual(r2,bm2[3].xyz);
+    vec4 r3=mat4ToQuat(bm3), d3=tToDual(r3,bm3[3].xyz);
+    if(dot(r0,r1)<0.0){r1=-r1;d1=-d1;}
+    if(dot(r0,r2)<0.0){r2=-r2;d2=-d2;}
+    if(dot(r0,r3)<0.0){r3=-r3;d3=-d3;}
+    vec4 bR=skinWeight.x*r0+skinWeight.y*r1+skinWeight.z*r2+skinWeight.w*r3;
+    vec4 bD=skinWeight.x*d0+skinWeight.y*d1+skinWeight.z*d2+skinWeight.w*d3;
+    transformed=dqPoint(bR,bD,transformed);
+    objectNormal=dqNorm(bR,objectNormal);
     #ifdef USE_TANGENT
-      objectTangent = dqTransformNormal(blendR, objectTangent);
+      objectTangent=dqNorm(bR,objectTangent);
     #endif
   #endif
 `;
 
-/**
- * Patches a Three.js material to use Dual Quaternion Skinning
- * instead of default Linear Blend Skinning.
- */
 function applyDQS(material) {
   material.onBeforeCompile = (shader) => {
-    // Inject DQS helper functions
-    shader.vertexShader = shader.vertexShader.replace(
-      '#include <skinning_pars_vertex>',
-      '#include <skinning_pars_vertex>\n' + DQS_VERTEX_PARS
-    );
-    // Replace the default skinning chunk with DQS
-    shader.vertexShader = shader.vertexShader.replace(
-      '#include <skinning_vertex>',
-      DQS_SKINNING_VERTEX
-    );
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <skinning_pars_vertex>', '#include <skinning_pars_vertex>\n' + DQS_PARS)
+      .replace('#include <skinning_vertex>', DQS_SKIN);
   };
   material.customProgramCacheKey = () => 'dqs_' + material.uuid;
   return material;
@@ -248,85 +219,30 @@ function applyDQS(material) {
 
 
 // ═══════════════════════════════════════════════════════════════
-// LAYER B — Minimum-Jerk Trajectory Solver (5th-order polynomial)
-// ═══════════════════════════════════════════════════════════════
-//
-// x(t) = a₀ + a₁t + a₂t² + a₃t³ + a₄t⁴ + a₅t⁵
-//
-// Given boundary conditions at t=0 and t=T:
-//   position x₀, x_f
-//   velocity v₀, v_f (= 0 for start/end of sign)
-//   acceleration a₀_bc, a_f (= 0 for start/end of sign)
-//
-// The solver computes coefficients [a₀..a₅] yielding
-// bell-shaped velocity profiles and zero acceleration at
-// movement onset and offset — matching human motor planning.
+// Layer B — Minimum-Jerk Trajectory (5th-order polynomial)
 // ═══════════════════════════════════════════════════════════════
 
-class MinimumJerkSolver {
-  /**
-   * Compute 5th-order polynomial coefficients for a single DOF.
-   * @param {number} x0 - start position
-   * @param {number} xf - end position
-   * @param {number} T  - movement duration (normalized to 1 for frame-based)
-   * @param {number} v0 - start velocity (default 0)
-   * @param {number} vf - end velocity (default 0)
-   * @param {number} a0 - start acceleration (default 0)
-   * @param {number} af - end acceleration (default 0)
-   * @returns {number[]} coefficients [a0, a1, a2, a3, a4, a5]
-   */
-  static computeCoefficients(x0, xf, T = 1, v0 = 0, vf = 0, a0 = 0, af = 0) {
-    const T2 = T * T;
-    const T3 = T2 * T;
-    const T4 = T3 * T;
-    const T5 = T4 * T;
-
-    const c0 = x0;
-    const c1 = v0;
-    const c2 = a0 / 2;
-
-    const dx = xf - x0 - v0 * T - (a0 / 2) * T2;
+class MinJerk {
+  /** Coefficients for x(t) = a₀+a₁t+a₂t²+a₃t³+a₄t⁴+a₅t⁵ */
+  static coeffs(x0, xf, T = 1, v0 = 0, vf = 0, a0 = 0, af = 0) {
+    const T2 = T * T, T3 = T2 * T, T4 = T3 * T, T5 = T4 * T;
+    const c0 = x0, c1 = v0, c2 = a0 / 2;
+    const dx = xf - x0 - v0 * T - c2 * T2;
     const dv = vf - v0 - a0 * T;
     const da = af - a0;
-
-    const c3 = (20 * dx - (8 * dv + da * T) * T) / (2 * T3);
-    const c4 = (-30 * dx + (14 * dv + 2 * da * T) * T) / (2 * T4);
-    const c5 = (12 * dx - (6 * dv + da * T) * T) / (2 * T5);
-
-    return [c0, c1, c2, c3, c4, c5];
+    return [c0, c1, c2,
+      (20 * dx - (8 * dv + da * T) * T) / (2 * T3),
+      (-30 * dx + (14 * dv + 2 * da * T) * T) / (2 * T4),
+      (12 * dx - (6 * dv + da * T) * T) / (2 * T5)];
   }
 
-  /**
-   * Evaluate the polynomial at time t.
-   * @param {number[]} coeffs - [a0..a5]
-   * @param {number} t - time in [0, T]
-   * @returns {number} position
-   */
-  static evaluate(coeffs, t) {
-    const [a0, a1, a2, a3, a4, a5] = coeffs;
-    const t2 = t * t;
-    const t3 = t2 * t;
-    return a0 + a1 * t + a2 * t2 + a3 * t3 + a4 * t2 * t2 + a5 * t2 * t3;
+  static eval(c, t) {
+    const t2 = t * t, t3 = t2 * t;
+    return c[0] + c[1] * t + c[2] * t2 + c[3] * t3 + c[4] * t2 * t2 + c[5] * t2 * t3;
   }
 
-  /**
-   * Evaluate velocity at time t (first derivative).
-   * @param {number[]} coeffs - [a0..a5]
-   * @param {number} t
-   * @returns {number} velocity
-   */
-  static evaluateVelocity(coeffs, t) {
-    const [, a1, a2, a3, a4, a5] = coeffs;
-    const t2 = t * t;
-    return a1 + 2 * a2 * t + 3 * a3 * t2 + 4 * a4 * t2 * t + 5 * a5 * t2 * t2;
-  }
-
-  /**
-   * Simplified minimum-jerk for normalized t in [0,1] with
-   * zero boundary velocity and acceleration (standard case).
-   * This is the canonical: 10t³ - 15t⁴ + 6t⁵
-   */
-  static canonical(t) {
+  /** Canonical normalized minimum-jerk: 10t³ − 15t⁴ + 6t⁵ */
+  static ease(t) {
     const t3 = t * t * t;
     return 10 * t3 - 15 * t3 * t + 6 * t3 * t * t;
   }
@@ -334,229 +250,93 @@ class MinimumJerkSolver {
 
 
 // ═══════════════════════════════════════════════════════════════
-// LAYER C — Kinematic Coupling & Whole-Body Control
-// ═══════════════════════════════════════════════════════════════
-//
-// Finger Coupling Rule:
-//   θ_DIP = (2/3) × θ_PIP
-//   The DIP joint angle is always 2/3 of the PIP angle,
-//   producing a natural curling arc instead of broken-stick
-//   finger poses. Enforced on index, middle, ring, pinky.
-//
-// Whole-Body Control (WBC):
-//   - Torso Y-rotation: ±0.5 rad based on hand horizontal
-//     position in signing space quadrants
-//   - Spine X-tilt: ±0.15 rad based on hand elevation
-//     (lean forward for low signs, upright for high)
-//   - Smooth exponential decay for natural return to neutral
+// Layer C — Kinematic Coupling & Whole-Body Control
 // ═══════════════════════════════════════════════════════════════
 
 const WBC = {
-  MAX_TORSO_YAW: 0.5,       // ±0.5 radians max torso rotation
-  MAX_TORSO_PITCH: 0.15,    // ±0.15 radians max forward/back tilt
-  TORSO_SMOOTH: 0.08,       // Exponential smoothing factor
-  TORSO_RETURN: 0.92,       // Decay toward neutral per frame
-  DIP_PIP_RATIO: 2 / 3,     // θ_DIP = 2/3 × θ_PIP
+  MAX_YAW: 0.5,
+  MAX_PITCH: 0.15,
+  SMOOTH: 0.08,
+  RETURN: 0.92,
+  DIP_PIP: 2 / 3,
 };
-
-
-// ─── Geometry helpers ───────────────────────────────────────
-function createCapsule(radius, length, segments = 8) {
-  return new THREE.CapsuleGeometry(radius, length, segments, segments * 2);
-}
-
-function createJointSphere(radius) {
-  return new THREE.SphereGeometry(radius, 12, 12);
-}
-
-// ─── Material factory (with DQS support) ────────────────────
-function makeMat(color, opts = {}) {
-  const mat = new THREE.MeshStandardMaterial({
-    color,
-    roughness: opts.roughness ?? 0.55,
-    metalness: opts.metalness ?? 0.05,
-    flatShading: opts.flat ?? false,
-    ...opts,
-  });
-  // Apply DQS to all skinnable materials
-  if (opts.skinnable) {
-    applyDQS(mat);
-  }
-  return mat;
-}
 
 
 // ═══════════════════════════════════════════════════════════════
 // FACS — Facial Action Coding System
 // ═══════════════════════════════════════════════════════════════
-//
-// Maps MediaPipe face mesh landmarks (32-point subset from
-// camera.js) to FACS Action Units for sign language grammar.
-//
-// Implemented AUs:
-//   AU1  - Inner Brow Raise (question markers)
-//   AU2  - Outer Brow Raise (surprise, WH-questions)
-//   AU4  - Brow Lowerer (negation, furrowing)
-//   AU25 - Lips Part
-//   AU26 - Jaw Drop
-//   AU20 - Lip Stretcher (mouth width)
-// ═══════════════════════════════════════════════════════════════
 
-class FACSMapper {
+class FACS {
   constructor() {
-    // Smoothed AU intensities (0-1 range)
-    this.au1 = 0;   // inner brow raise
-    this.au2 = 0;   // outer brow raise
-    this.au4 = 0;   // brow lowerer
-    this.au25 = 0;  // lips part
-    this.au26 = 0;  // jaw drop
-    this.au20 = 0;  // lip stretcher (width)
-
-    // Calibration baselines (set from first neutral frame)
-    this.baseBrowEyeDist = null;
-    this.baseMouthH = null;
-    this.baseMouthW = null;
-    this.frameCount = 0;
+    this.au = { 1: 0, 2: 0, 4: 0, 25: 0, 26: 0, 20: 0 };
+    this.base = { brow: null, mH: null, mW: null };
+    this.n = 0;
   }
 
-  /**
-   * Update AU values from a 32-point face landmark subset.
-   * Landmark layout from camera.js FACE_KEY_INDICES:
-   *   [0-4]   left brow (5 points)
-   *   [5-9]   right brow (5 points)
-   *   [10-13] left eye (4 points: outer, inner, top, bottom)
-   *   [14-17] right eye (4 points)
-   *   [18-20] nose (3 points)
-   *   [21-28] mouth (8 points outer ring)
-   *   [29-31] jaw/chin (3 points)
-   */
-  update(faceData) {
-    if (!faceData || faceData.length < 32) {
-      this._decayToNeutral();
-      return;
+  update(face) {
+    if (!face || face.length < 32) { this._decay(); return; }
+    this.n++;
+
+    // Brow distances (indices 0-4 left brow, 5-9 right, 12/16 eye tops)
+    const ib = ((face[0][1] - face[12][1]) + (face[5][1] - face[16][1])) / 2;
+    const ob = ((face[4][1] - face[12][1]) + (face[9][1] - face[16][1])) / 2;
+    const ab = (ib + ob) / 2;
+
+    // Mouth (indices 21=L corner, 22=R corner, 25=top, 26=bottom)
+    const mH = Math.abs(face[26][1] - face[25][1]);
+    const mW = Math.abs(face[22][0] - face[21][0]);
+
+    if (this.n <= 5) {
+      const f = (v, o) => o ? o * 0.7 + v * 0.3 : v;
+      this.base.brow = f(ab, this.base.brow);
+      this.base.mH = f(mH, this.base.mH);
+      this.base.mW = f(mW, this.base.mW);
     }
 
-    this.frameCount++;
+    const bb = this.base.brow || -0.03;
+    const bh = this.base.mH || 0.02;
+    const bw = this.base.mW || 0.06;
 
-    // ── Brow analysis ──
-    // Left brow inner (index 0) and outer (index 4) Y positions
-    // relative to left eye top (index 12)
-    const lBrowInnerY = faceData[0][1];
-    const lBrowOuterY = faceData[4][1];
-    const lEyeTopY = faceData[12][1];
+    const raw = {
+      1:  Math.max(0, Math.min(1, (bb - ib) * 15)),
+      2:  Math.max(0, Math.min(1, (bb - ob) * 15)),
+      4:  Math.max(0, Math.min(1, (ab - bb) * 12)),
+      25: Math.max(0, Math.min(1, (mH - bh) * 20)),
+      26: Math.max(0, Math.min(1, (mH - bh * 1.5) * 15)),
+      20: Math.max(0, Math.min(1, (mW - bw) * 12)),
+    };
 
-    const rBrowInnerY = faceData[5][1];
-    const rBrowOuterY = faceData[9][1];
-    const rEyeTopY = faceData[16][1];
-
-    // Brow-to-eye distances (negative = brow above eye = raised)
-    const innerBrowDist = ((lBrowInnerY - lEyeTopY) + (rBrowInnerY - rEyeTopY)) / 2;
-    const outerBrowDist = ((lBrowOuterY - lEyeTopY) + (rBrowOuterY - rEyeTopY)) / 2;
-    const avgBrowDist = (innerBrowDist + outerBrowDist) / 2;
-
-    // Calibrate baseline from first few frames
-    if (this.frameCount <= 5) {
-      if (!this.baseBrowEyeDist) this.baseBrowEyeDist = avgBrowDist;
-      else this.baseBrowEyeDist = this.baseBrowEyeDist * 0.7 + avgBrowDist * 0.3;
-    }
-    const baseBrow = this.baseBrowEyeDist || -0.03;
-
-    // AU1: Inner brow raise — inner brow moved up relative to baseline
-    const innerRaise = Math.max(0, (baseBrow - innerBrowDist) * 15);
-    // AU2: Outer brow raise — outer brow moved up
-    const outerRaise = Math.max(0, (baseBrow - outerBrowDist) * 15);
-    // AU4: Brow lowerer — brow moved down (furrowed)
-    const browLower = Math.max(0, (avgBrowDist - baseBrow) * 12);
-
-    // ── Mouth analysis ──
-    // Mouth landmarks: [21]=left corner, [22]=right corner,
-    // [25]=top lip, [26]=bottom lip (from the 8-point ring)
-    const mouthTopY = faceData[25][1];
-    const mouthBotY = faceData[26][1];
-    const mouthLeftX = faceData[21][0];
-    const mouthRightX = faceData[22][0];
-
-    const mouthH = Math.abs(mouthBotY - mouthTopY);
-    const mouthW = Math.abs(mouthRightX - mouthLeftX);
-
-    if (this.frameCount <= 5) {
-      if (!this.baseMouthH) this.baseMouthH = mouthH;
-      else this.baseMouthH = this.baseMouthH * 0.7 + mouthH * 0.3;
-      if (!this.baseMouthW) this.baseMouthW = mouthW;
-      else this.baseMouthW = this.baseMouthW * 0.7 + mouthW * 0.3;
-    }
-    const baseMH = this.baseMouthH || 0.02;
-    const baseMW = this.baseMouthW || 0.06;
-
-    // AU25: Lips part (small opening)
-    const lipsPart = Math.max(0, Math.min(1, (mouthH - baseMH) * 20));
-    // AU26: Jaw drop (large opening)
-    const jawDrop = Math.max(0, Math.min(1, (mouthH - baseMH * 1.5) * 15));
-    // AU20: Lip stretcher (width increase)
-    const lipStretch = Math.max(0, Math.min(1, (mouthW - baseMW) * 12));
-
-    // Smooth all AUs with exponential filter
-    const s = 0.25; // Responsiveness
-    this.au1  += (Math.min(1, innerRaise) - this.au1)  * s;
-    this.au2  += (Math.min(1, outerRaise) - this.au2)  * s;
-    this.au4  += (Math.min(1, browLower)  - this.au4)  * s;
-    this.au25 += (lipsPart  - this.au25) * s;
-    this.au26 += (jawDrop   - this.au26) * s;
-    this.au20 += (lipStretch - this.au20) * s;
+    for (const k in this.au) this.au[k] += (raw[k] - this.au[k]) * 0.25;
   }
 
-  _decayToNeutral() {
-    const d = 0.08;
-    this.au1  *= (1 - d);
-    this.au2  *= (1 - d);
-    this.au4  *= (1 - d);
-    this.au25 *= (1 - d);
-    this.au26 *= (1 - d);
-    this.au20 *= (1 - d);
+  _decay() {
+    for (const k in this.au) this.au[k] *= 0.92;
   }
 
-  /** Get brow vertical offset (positive = up) */
-  getBrowOffset(side) {
-    // AU1 raises inner, AU2 raises outer, AU4 lowers
-    const raise = (this.au1 * 0.6 + this.au2 * 0.4) * 0.012;
-    const lower = this.au4 * 0.008;
-    return raise - lower;
-  }
-
-  /** Get brow furrow (inward pinch) */
-  getBrowFurrow() {
-    return this.au4 * 0.003;
-  }
-
-  /** Get mouth opening amount */
-  getMouthOpen() {
-    return Math.min(0.018, (this.au25 * 0.4 + this.au26 * 0.6) * 0.018);
-  }
-
-  /** Get mouth width scale */
-  getMouthWidth() {
-    return 1 + this.au20 * 0.4;
-  }
+  get browUp() { return (this.au[1] * 0.6 + this.au[2] * 0.4) * 0.015; }
+  get browDown() { return this.au[4] * 0.010; }
+  get browPinch() { return this.au[4] * 0.004; }
+  get mouthOpen() { return Math.min(0.022, (this.au[25] * 0.4 + this.au[26] * 0.6) * 0.022); }
+  get mouthWide() { return 1 + this.au[20] * 0.4; }
 }
 
 
 // ═══════════════════════════════════════════════════════════════
-// Main HumanoidAvatar class
+// HumanoidAvatar — Main class
 // ═══════════════════════════════════════════════════════════════
 
 export class HumanoidAvatar {
   constructor(containerEl) {
     this.container = typeof containerEl === 'string'
       ? document.getElementById(containerEl) : containerEl;
-    this.charId = 'meiling';
-    this.materials = {};
-    this.groups = {};
-    this.fingerChains = { left: {}, right: {} };
-    this.scene = null;
-    this.camera = null;
-    this.renderer = null;
+    if (!this.container) return;
 
-    // Animation state
+    this.charId = 'meiling';
+    this.mats = {};
+    this.g = {};           // named groups/meshes
+    this.fingers = { left: {}, right: {} };
+
+    // Animation
     this.seq = [];
     this.playing = false;
     this.paused = false;
@@ -569,74 +349,78 @@ export class HumanoidAvatar {
     this._onDone = null;
     this.prevFrame = null;
 
-    // Layer B: trajectory state — per-joint coefficient cache
-    this._trajCache = new Map();
-    this._trajSegStart = -1;
-
-    // Layer C: WBC state
-    this._torsoYaw = 0;
-    this._torsoPitch = 0;
+    // WBC
+    this._yaw = 0;
+    this._pitch = 0;
 
     // FACS
-    this.facs = new FACSMapper();
+    this.facs = new FACS();
 
-    this._build();
+    this._init();
   }
 
-  _build() {
-    this._buildScene();
-    this._buildMaterials();
-    this._buildBody();
-    this._buildArm('left');
-    this._buildArm('right');
-    this._buildHead();
-    this._buildLegs();
-    this._startLoop();
+  // ─── Scene setup ──────────────────────────────────────────
+
+  _init() {
+    this._scene();
+    this._makeMats();
+    this._body();
+    this._arm('left');
+    this._arm('right');
+    this._head();
+    this._legs();
+    this._loop();
     this.render(null);
   }
 
-  _buildScene() {
+  _scene() {
     const w = this.container.clientWidth || 400;
     const h = this.container.clientHeight || 520;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x1a1d38);
+    // Soft gradient background via fog
+    this.scene.background = new THREE.Color(0x1e2140);
+    this.scene.fog = new THREE.Fog(0x1e2140, 3, 6);
 
-    this.camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 50);
-    this.camera.position.set(0, 0.15, 1.8);
-    this.camera.lookAt(0, 0.1, 0);
+    this.camera = new THREE.PerspectiveCamera(38, w / h, 0.05, 50);
+    this.camera.position.set(0, 0.12, 2.4);
+    this.camera.lookAt(0, 0.05, 0);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.1;
+    this.renderer.toneMappingExposure = 1.2;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.container.innerHTML = '';
     this.container.appendChild(this.renderer.domElement);
 
-    // Lights
-    this.scene.add(new THREE.HemisphereLight(0xddeeff, 0x222233, 0.7));
-    const key = new THREE.DirectionalLight(0xfff4e6, 1.0);
-    key.position.set(2, 3, 4);
+    // Three-point lighting for toon style
+    const hemi = new THREE.HemisphereLight(0xffeedd, 0x303050, 0.6);
+    this.scene.add(hemi);
+
+    const key = new THREE.DirectionalLight(0xfff8f0, 1.4);
+    key.position.set(3, 4, 5);
     this.scene.add(key);
-    const rim = new THREE.DirectionalLight(0x8B85FF, 0.4);
-    rim.position.set(-2, -1, -3);
+
+    const rim = new THREE.DirectionalLight(0x8888ff, 0.5);
+    rim.position.set(-3, 2, -4);
     this.scene.add(rim);
-    const fill = new THREE.PointLight(0x6C63FF, 0.2, 10);
-    fill.position.set(-3, -2, 2);
+
+    const fill = new THREE.DirectionalLight(0xffd0a0, 0.3);
+    fill.position.set(-2, -1, 3);
     this.scene.add(fill);
 
-    // Floor shadow hint
-    const floorGeo = new THREE.PlaneGeometry(2, 2);
-    const floorMat = new THREE.MeshStandardMaterial({
-      color: 0x1a1d38, roughness: 1, metalness: 0,
+    // Subtle floor circle
+    const floorGeo = new THREE.CircleGeometry(0.5, 32);
+    const floorMat = new THREE.MeshBasicMaterial({
+      color: 0x16183a, transparent: true, opacity: 0.5,
     });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.68;
+    floor.position.y = -0.82;
     this.scene.add(floor);
 
-    // Resize observer
     new ResizeObserver(() => {
       const nw = this.container.clientWidth, nh = this.container.clientHeight;
       if (!nw || !nh) return;
@@ -646,346 +430,440 @@ export class HumanoidAvatar {
     }).observe(this.container);
   }
 
-  _buildMaterials() {
+  _makeMats() {
     const c = CHARACTERS[this.charId];
-    this.materials = {
-      skin: makeMat(c.skin, { skinnable: true }),
-      skinDk: makeMat(c.skinDk, { skinnable: true }),
-      shirt: makeMat(c.shirt),
-      shirtDk: makeMat(c.shirtDk),
-      pants: makeMat(c.pants),
-      hair: makeMat(c.hair, { roughness: 0.7 }),
-      iris: makeMat(c.iris),
-      sclera: makeMat(c.sclera, { roughness: 0.3 }),
-      lip: makeMat(c.lip),
-      brow: makeMat(c.brow),
+    this.mats = {
+      skin:    toonMat(c.skin),
+      skinDk:  toonMat(c.skinDk),
+      skinLt:  toonMat(c.skinLt),
+      shirt:   toonMat(c.shirt),
+      shirtLt: toonMat(c.shirtLt),
+      pants:   toonMat(c.pants),
+      hair:    toonMat(c.hair),
+      hairHi:  toonMat(c.hairHi),
+      iris:    toonMat(c.iris),
+      irisRing: toonMat(c.irisRing),
+      sclera:  new THREE.MeshBasicMaterial({ color: c.sclera }),
+      lip:     toonMat(c.lip),
+      lipDk:   toonMat(c.lipDk),
+      brow:    toonMat(c.brow),
+      shoe:    toonMat(c.shoe),
+      outline: new THREE.MeshBasicMaterial({ color: c.outline, side: THREE.BackSide }),
+      blush:   new THREE.MeshBasicMaterial({
+        color: c.blush, transparent: true, opacity: 0.2, side: THREE.FrontSide,
+      }),
+      pupil:   new THREE.MeshBasicMaterial({ color: 0x0A0A0A }),
+      eyeHL:   new THREE.MeshBasicMaterial({ color: 0xFFFFFF }),
     };
   }
 
-  _updateMaterials() {
+  _recolor() {
     const c = CHARACTERS[this.charId];
-    this.materials.skin.color.setHex(c.skin);
-    this.materials.skinDk.color.setHex(c.skinDk);
-    this.materials.shirt.color.setHex(c.shirt);
-    this.materials.shirtDk.color.setHex(c.shirtDk);
-    this.materials.pants.color.setHex(c.pants);
-    this.materials.hair.color.setHex(c.hair);
-    this.materials.iris.color.setHex(c.iris);
-    this.materials.lip.color.setHex(c.lip);
-    this.materials.brow.color.setHex(c.brow);
+    this.mats.skin.color.setHex(c.skin);
+    this.mats.skinDk.color.setHex(c.skinDk);
+    this.mats.skinLt.color.setHex(c.skinLt);
+    this.mats.shirt.color.setHex(c.shirt);
+    this.mats.shirtLt.color.setHex(c.shirtLt);
+    this.mats.pants.color.setHex(c.pants);
+    this.mats.hair.color.setHex(c.hair);
+    this.mats.hairHi.color.setHex(c.hairHi);
+    this.mats.iris.color.setHex(c.iris);
+    this.mats.irisRing.color.setHex(c.irisRing);
+    this.mats.sclera.color.setHex(c.sclera);
+    this.mats.lip.color.setHex(c.lip);
+    this.mats.lipDk.color.setHex(c.lipDk);
+    this.mats.brow.color.setHex(c.brow);
+    this.mats.shoe.color.setHex(c.shoe);
+    this.mats.outline.color.setHex(c.outline);
+    this.mats.blush.color.setHex(c.blush);
   }
 
-  _buildBody() {
+  // ─── Body construction ────────────────────────────────────
+
+  _body() {
     const root = new THREE.Group();
     this.scene.add(root);
-    this.groups.root = root;
+    this.g.root = root;
 
-    // Hips
     const hips = new THREE.Group();
-    hips.position.set(0, -0.15, 0);
+    hips.position.set(0, -0.18, 0);
     root.add(hips);
-    this.groups.hips = hips;
+    this.g.hips = hips;
 
-    // Spine (rotates for WBC torso coordination)
+    // Spine (WBC rotation target)
     const spine = new THREE.Group();
-    spine.position.set(0, 0.05, 0);
+    spine.position.set(0, 0.04, 0);
     hips.add(spine);
-    this.groups.spine = spine;
+    this.g.spine = spine;
 
-    // Chest mesh
-    const chestGeo = new THREE.BoxGeometry(B.chestW * 2, B.chestH, B.chestD * 2, 2, 2, 2);
-    this._roundBox(chestGeo, 0.02);
-    const chest = new THREE.Mesh(chestGeo, this.materials.shirt);
-    chest.position.set(0, B.chestH / 2 + 0.02, 0);
+    // Torso — rounded box with outline
+    const chestGeo = this._roundedBox(P.chestW, P.chestH, P.chestD, 0.04);
+    const chest = new THREE.Mesh(chestGeo, this.mats.shirt);
+    chest.position.set(0, P.chestH / 2 + 0.02, 0);
     spine.add(chest);
+    addOutline(chest, chestGeo, 0.04, CHARACTERS[this.charId].outline);
 
-    // Waist mesh
-    const waistGeo = new THREE.BoxGeometry(B.waistW * 2, B.waistH, B.waistD * 2, 2, 2, 2);
-    this._roundBox(waistGeo, 0.015);
-    const waist = new THREE.Mesh(waistGeo, this.materials.shirt);
-    waist.position.set(0, -0.01, 0);
+    // Waist
+    const waistGeo = this._roundedBox(P.waistW, P.waistH, P.waistD, 0.03);
+    const waist = new THREE.Mesh(waistGeo, this.mats.shirt);
+    waist.position.set(0, -0.02, 0);
     spine.add(waist);
 
     // Belt
-    const beltGeo = new THREE.BoxGeometry(B.waistW * 2 + 0.01, 0.018, B.waistD * 2 + 0.01);
-    const belt = new THREE.Mesh(beltGeo, makeMat(0x3A3028));
+    const beltGeo = this._roundedBox(P.waistW + 0.01, 0.022, P.waistD + 0.01, 0.008);
+    const belt = new THREE.Mesh(beltGeo, toonMat(0x3A3028));
     belt.position.set(0, -0.05, 0);
     spine.add(belt);
 
-    // Shoulder area
-    const shoulderGeo = new THREE.BoxGeometry(B.shoulderSpan, 0.04, B.chestD * 1.6, 2, 1, 2);
-    this._roundBox(shoulderGeo, 0.015);
-    const shoulders = new THREE.Mesh(shoulderGeo, this.materials.shirt);
-    shoulders.position.set(0, B.chestH + 0.01, 0);
+    // Shoulder span
+    const shoulderGeo = this._roundedBox(P.shoulderSpan, 0.05, P.chestD * 0.9, 0.02);
+    const shoulders = new THREE.Mesh(shoulderGeo, this.mats.shirt);
+    shoulders.position.set(0, P.chestH + 0.005, 0);
     spine.add(shoulders);
 
     // Neck
-    const neckGroup = new THREE.Group();
-    neckGroup.position.set(0, B.chestH + 0.03, 0);
-    spine.add(neckGroup);
-    this.groups.neck = neckGroup;
+    const neckGrp = new THREE.Group();
+    neckGrp.position.set(0, P.chestH + 0.025, 0);
+    spine.add(neckGrp);
+    this.g.neck = neckGrp;
 
-    const neckGeo = createCapsule(B.neckR, B.neckH, 8);
-    const neck = new THREE.Mesh(neckGeo, this.materials.skin);
-    neck.position.set(0, B.neckH / 2, 0);
-    neckGroup.add(neck);
+    const neckGeo = new THREE.CylinderGeometry(P.neckR, P.neckR * 1.1, P.neckH, 12);
+    const neck = new THREE.Mesh(neckGeo, this.mats.skin);
+    neck.position.set(0, P.neckH / 2, 0);
+    neckGrp.add(neck);
   }
 
-  _buildHead() {
-    const headGroup = new THREE.Group();
-    headGroup.position.set(0, B.neckH + 0.04, 0);
-    this.groups.neck.add(headGroup);
-    this.groups.head = headGroup;
+  _head() {
+    const headGrp = new THREE.Group();
+    headGrp.position.set(0, P.neckH + P.headR * 0.7, 0);
+    this.g.neck.add(headGrp);
+    this.g.head = headGrp;
 
     // Head sphere
-    const headGeo = new THREE.SphereGeometry(B.headR, 24, 24);
-    const head = new THREE.Mesh(headGeo, this.materials.skin);
-    head.scale.set(1, 1.12, 0.95);
-    headGroup.add(head);
+    const headGeo = new THREE.SphereGeometry(P.headR, 32, 28);
+    const head = new THREE.Mesh(headGeo, this.mats.skin);
+    head.scale.set(P.headSquash, P.headStretch, 0.95);
+    headGrp.add(head);
+    // Head outline
+    addOutline(head, headGeo, 0.025, CHARACTERS[this.charId].outline);
 
-    // Hair
-    const hairGeo = new THREE.SphereGeometry(B.headR + 0.008, 24, 16, 0, Math.PI * 2, 0, Math.PI * 0.55);
-    const hair = new THREE.Mesh(hairGeo, this.materials.hair);
-    hair.scale.set(1.05, 1.15, 1.0);
-    hair.position.y = 0.005;
-    headGroup.add(hair);
+    // ── Hair ──
+    // Back hair (large dome)
+    const backHairGeo = new THREE.SphereGeometry(P.headR + 0.015, 28, 20,
+      0, Math.PI * 2, 0, Math.PI * 0.6);
+    const backHair = new THREE.Mesh(backHairGeo, this.mats.hair);
+    backHair.scale.set(1.06, 1.12, 1.05);
+    backHair.position.set(0, 0.01, -0.01);
+    headGrp.add(backHair);
+    addOutline(backHair, backHairGeo, 0.03, CHARACTERS[this.charId].outline);
 
-    // Eyes
-    const eyeGeo = new THREE.SphereGeometry(0.015, 12, 12);
-    const irisGeo = new THREE.SphereGeometry(0.011, 12, 12);
-    const pupilGeo = new THREE.SphereGeometry(0.006, 8, 8);
-    const pupilMat = makeMat(0x111111);
+    // Fringe (bangs)
+    const fringeGeo = new THREE.SphereGeometry(P.headR + 0.012, 20, 8,
+      -Math.PI * 0.45, Math.PI * 0.9, 0, Math.PI * 0.28);
+    const fringe = new THREE.Mesh(fringeGeo, this.mats.hairHi);
+    fringe.scale.set(1.08, 1.05, 1.1);
+    fringe.position.set(0, 0.025, 0.02);
+    headGrp.add(fringe);
 
+    // ── Eyes ── (large, anime-inspired)
     for (const side of [-1, 1]) {
-      const eyeGroup = new THREE.Group();
-      eyeGroup.position.set(side * 0.035, 0.015, B.headR * 0.85);
-      headGroup.add(eyeGroup);
+      const eyeGrp = new THREE.Group();
+      eyeGrp.position.set(side * 0.058, 0.01, P.headR * 0.82);
+      headGrp.add(eyeGrp);
+      this.g[side < 0 ? 'eyeL' : 'eyeR'] = eyeGrp;
 
-      const sclera = new THREE.Mesh(eyeGeo, this.materials.sclera);
-      eyeGroup.add(sclera);
+      // Sclera (white, flat-lit for clean look)
+      const scleraGeo = new THREE.SphereGeometry(0.032, 16, 16);
+      const sclera = new THREE.Mesh(scleraGeo, this.mats.sclera);
+      sclera.scale.set(1.1, 1, 0.6);
+      eyeGrp.add(sclera);
 
-      const iris = new THREE.Mesh(irisGeo, this.materials.iris);
-      iris.position.z = 0.006;
-      eyeGroup.add(iris);
+      // Iris ring (outer colored ring)
+      const irisRingGeo = new THREE.SphereGeometry(0.024, 14, 14);
+      const irisRing = new THREE.Mesh(irisRingGeo, this.mats.irisRing);
+      irisRing.position.z = 0.008;
+      irisRing.scale.set(1, 1, 0.3);
+      eyeGrp.add(irisRing);
 
-      const pupil = new THREE.Mesh(pupilGeo, pupilMat);
-      pupil.position.z = 0.01;
-      eyeGroup.add(pupil);
+      // Iris (inner)
+      const irisGeo = new THREE.SphereGeometry(0.019, 14, 14);
+      const iris = new THREE.Mesh(irisGeo, this.mats.iris);
+      iris.position.z = 0.012;
+      iris.scale.set(1, 1, 0.3);
+      eyeGrp.add(iris);
 
-      const hlGeo = new THREE.SphereGeometry(0.004, 6, 6);
-      const hlMat = makeMat(0xFFFFFF, { roughness: 0.1, metalness: 0.0, emissive: 0xFFFFFF, emissiveIntensity: 0.5 });
-      const hl = new THREE.Mesh(hlGeo, hlMat);
-      hl.position.set(side * 0.004, 0.004, 0.012);
-      eyeGroup.add(hl);
+      // Pupil
+      const pupilGeo = new THREE.CircleGeometry(0.010, 12);
+      const pupil = new THREE.Mesh(pupilGeo, this.mats.pupil);
+      pupil.position.z = 0.018;
+      eyeGrp.add(pupil);
+
+      // Highlight (large, top-right)
+      const hl1Geo = new THREE.CircleGeometry(0.008, 8);
+      const hl1 = new THREE.Mesh(hl1Geo, this.mats.eyeHL);
+      hl1.position.set(side * 0.006, 0.008, 0.019);
+      eyeGrp.add(hl1);
+
+      // Small secondary highlight
+      const hl2Geo = new THREE.CircleGeometry(0.004, 6);
+      const hl2 = new THREE.Mesh(hl2Geo, this.mats.eyeHL);
+      hl2.position.set(-side * 0.004, -0.004, 0.019);
+      eyeGrp.add(hl2);
+
+      // Upper eyelid line
+      const lidGeo = new THREE.TorusGeometry(0.030, 0.003, 4, 12, Math.PI);
+      const lid = new THREE.Mesh(lidGeo, this.mats.brow);
+      lid.position.set(0, 0.005, 0.01);
+      lid.rotation.z = Math.PI;
+      lid.scale.set(1.1, 0.8, 0.5);
+      eyeGrp.add(lid);
     }
 
-    // Eyebrows (controlled by FACS)
+    // ── Eyebrows ── (thick, expressive arcs)
     for (const side of [-1, 1]) {
-      const browGeo = new THREE.BoxGeometry(0.03, 0.005, 0.008);
-      const brow = new THREE.Mesh(browGeo, this.materials.brow);
-      brow.position.set(side * 0.035, 0.04, B.headR * 0.8);
-      headGroup.add(brow);
-      if (side === -1) this.groups.browL = brow;
-      else this.groups.browR = brow;
+      const browGeo = this._roundedBox(0.05, 0.010, 0.012, 0.004);
+      const brow = new THREE.Mesh(browGeo, this.mats.brow);
+      brow.position.set(side * 0.058, 0.055, P.headR * 0.78);
+      brow.rotation.z = side * -0.1; // slight angle
+      headGrp.add(brow);
+      this.g[side < 0 ? 'browL' : 'browR'] = brow;
     }
 
-    // Nose
-    const noseGeo = new THREE.ConeGeometry(0.012, 0.025, 6);
-    const nose = new THREE.Mesh(noseGeo, this.materials.skinDk);
-    nose.position.set(0, -0.01, B.headR * 0.9);
-    nose.rotation.x = Math.PI * 0.15;
-    headGroup.add(nose);
+    // ── Nose ──
+    const noseGeo = new THREE.SphereGeometry(0.018, 8, 8);
+    const nose = new THREE.Mesh(noseGeo, this.mats.skinDk);
+    nose.position.set(0, -0.02, P.headR * 0.88);
+    nose.scale.set(0.8, 0.7, 0.6);
+    headGrp.add(nose);
 
-    // Mouth (controlled by FACS AU25/26/20)
-    const mouthGroup = new THREE.Group();
-    mouthGroup.position.set(0, -0.04, B.headR * 0.85);
-    headGroup.add(mouthGroup);
-    this.groups.mouth = mouthGroup;
-
-    const lipGeo = new THREE.BoxGeometry(0.035, 0.006, 0.008, 4, 1, 1);
-    this._roundBox(lipGeo, 0.003);
-    const upperLip = new THREE.Mesh(lipGeo, this.materials.lip);
-    upperLip.position.y = 0.003;
-    mouthGroup.add(upperLip);
-    const lowerLip = new THREE.Mesh(lipGeo, this.materials.lip);
-    lowerLip.position.y = -0.003;
-    mouthGroup.add(lowerLip);
-    this.groups.upperLip = upperLip;
-    this.groups.lowerLip = lowerLip;
-
-    // Ears
+    // ── Blush spots ──
     for (const side of [-1, 1]) {
-      const earGeo = new THREE.SphereGeometry(0.02, 8, 8);
-      const ear = new THREE.Mesh(earGeo, this.materials.skin);
-      ear.position.set(side * (B.headR + 0.005), 0, -0.01);
-      ear.scale.set(0.5, 1, 0.7);
-      headGroup.add(ear);
+      const blushGeo = new THREE.CircleGeometry(0.022, 12);
+      const blush = new THREE.Mesh(blushGeo, this.mats.blush);
+      blush.position.set(side * 0.08, -0.03, P.headR * 0.82);
+      blush.lookAt(blush.position.clone().add(new THREE.Vector3(0, 0, 1)));
+      headGrp.add(blush);
+    }
+
+    // ── Mouth ──
+    const mouthGrp = new THREE.Group();
+    mouthGrp.position.set(0, -0.058, P.headR * 0.84);
+    headGrp.add(mouthGrp);
+    this.g.mouth = mouthGrp;
+
+    // Upper lip
+    const ulGeo = this._roundedBox(0.04, 0.008, 0.012, 0.003);
+    const ul = new THREE.Mesh(ulGeo, this.mats.lip);
+    ul.position.y = 0.004;
+    mouthGrp.add(ul);
+    this.g.upperLip = ul;
+
+    // Lower lip
+    const llGeo = this._roundedBox(0.042, 0.009, 0.012, 0.003);
+    const ll = new THREE.Mesh(llGeo, this.mats.lipDk);
+    ll.position.y = -0.004;
+    mouthGrp.add(ll);
+    this.g.lowerLip = ll;
+
+    // ── Ears ──
+    for (const side of [-1, 1]) {
+      const earGeo = new THREE.SphereGeometry(0.028, 8, 8);
+      const ear = new THREE.Mesh(earGeo, this.mats.skin);
+      ear.position.set(side * (P.headR * P.headSquash + 0.005), -0.01, -0.02);
+      ear.scale.set(0.35, 0.9, 0.65);
+      headGrp.add(ear);
     }
   }
 
-  _buildArm(side) {
+  _arm(side) {
     const sign = side === 'left' ? -1 : 1;
-    const shoulderX = sign * B.shoulderSpan / 2;
+    const sx = sign * P.shoulderSpan / 2;
 
-    // Shoulder group
-    const shoulderGroup = new THREE.Group();
-    shoulderGroup.position.set(shoulderX, B.chestH + 0.01, 0);
-    this.groups.spine.add(shoulderGroup);
-    this.groups[side + 'Shoulder'] = shoulderGroup;
+    // Shoulder
+    const shoulderGrp = new THREE.Group();
+    shoulderGrp.position.set(sx, P.chestH + 0.005, 0);
+    this.g.spine.add(shoulderGrp);
+    this.g[side + 'Shoulder'] = shoulderGrp;
 
-    // Shoulder joint sphere
-    const sjGeo = createJointSphere(B.upperArmR + 0.006);
-    const sj = new THREE.Mesh(sjGeo, this.materials.shirt);
-    shoulderGroup.add(sj);
+    // Shoulder ball
+    const sjGeo = new THREE.SphereGeometry(P.shoulderR, 14, 14);
+    const sj = new THREE.Mesh(sjGeo, this.mats.shirtLt);
+    shoulderGrp.add(sj);
+    addOutline(sj, sjGeo, 0.05, CHARACTERS[this.charId].outline);
 
-    // Upper arm group
-    const upperArmGroup = new THREE.Group();
-    shoulderGroup.add(upperArmGroup);
-    this.groups[side + 'UpperArm'] = upperArmGroup;
+    // Upper arm
+    const uaGrp = new THREE.Group();
+    shoulderGrp.add(uaGrp);
+    this.g[side + 'UpperArm'] = uaGrp;
 
-    const uaGeo = createCapsule(B.upperArmR, B.upperArmLen, 8);
-    const ua = new THREE.Mesh(uaGeo, this.materials.skin);
-    ua.position.y = -(B.upperArmLen / 2 + B.upperArmR);
-    upperArmGroup.add(ua);
+    const uaGeo = new THREE.CapsuleGeometry(P.upperArmR, P.upperArmLen, 8, 12);
+    const ua = new THREE.Mesh(uaGeo, this.mats.skin);
+    ua.position.y = -(P.upperArmLen / 2 + P.upperArmR);
+    uaGrp.add(ua);
 
-    // Sleeve
-    const sleeveGeo = createCapsule(B.upperArmR + 0.005, B.upperArmLen * 0.45, 8);
-    const sleeve = new THREE.Mesh(sleeveGeo, this.materials.shirt);
-    sleeve.position.y = -(B.upperArmLen * 0.22 + B.upperArmR);
-    upperArmGroup.add(sleeve);
+    // Sleeve (covers top portion of upper arm)
+    const slGeo = new THREE.CapsuleGeometry(P.upperArmR + 0.008, P.upperArmLen * 0.5, 8, 10);
+    const sl = new THREE.Mesh(slGeo, this.mats.shirt);
+    sl.position.y = -(P.upperArmLen * 0.25 + P.upperArmR);
+    uaGrp.add(sl);
 
-    // Elbow joint
-    const elbowGroup = new THREE.Group();
-    elbowGroup.position.y = -(B.upperArmLen + B.upperArmR * 2);
-    upperArmGroup.add(elbowGroup);
-    this.groups[side + 'Elbow'] = elbowGroup;
+    // Elbow
+    const elbowGrp = new THREE.Group();
+    elbowGrp.position.y = -(P.upperArmLen + P.upperArmR * 2);
+    uaGrp.add(elbowGrp);
+    this.g[side + 'Elbow'] = elbowGrp;
 
-    const ejGeo = createJointSphere(B.foreArmR + 0.004);
-    const ej = new THREE.Mesh(ejGeo, this.materials.skin);
-    elbowGroup.add(ej);
+    const ejGeo = new THREE.SphereGeometry(P.foreArmR + 0.008, 10, 10);
+    const ej = new THREE.Mesh(ejGeo, this.mats.skin);
+    elbowGrp.add(ej);
 
-    // Forearm group
-    const foreArmGroup = new THREE.Group();
-    elbowGroup.add(foreArmGroup);
-    this.groups[side + 'ForeArm'] = foreArmGroup;
+    // Forearm
+    const faGrp = new THREE.Group();
+    elbowGrp.add(faGrp);
+    this.g[side + 'ForeArm'] = faGrp;
 
-    const faGeo = createCapsule(B.foreArmR, B.foreArmLen, 8);
-    const fa = new THREE.Mesh(faGeo, this.materials.skin);
-    fa.position.y = -(B.foreArmLen / 2 + B.foreArmR);
-    foreArmGroup.add(fa);
+    const faGeo = new THREE.CapsuleGeometry(P.foreArmR, P.foreArmLen, 8, 12);
+    const fa = new THREE.Mesh(faGeo, this.mats.skin);
+    fa.position.y = -(P.foreArmLen / 2 + P.foreArmR);
+    faGrp.add(fa);
 
-    // Wrist joint
-    const wristGroup = new THREE.Group();
-    wristGroup.position.y = -(B.foreArmLen + B.foreArmR * 2);
-    foreArmGroup.add(wristGroup);
-    this.groups[side + 'Wrist'] = wristGroup;
+    // Wrist
+    const wristGrp = new THREE.Group();
+    wristGrp.position.y = -(P.foreArmLen + P.foreArmR * 2);
+    faGrp.add(wristGrp);
+    this.g[side + 'Wrist'] = wristGrp;
 
-    const wjGeo = createJointSphere(B.foreArmR);
-    const wj = new THREE.Mesh(wjGeo, this.materials.skin);
-    wristGroup.add(wj);
+    const wjGeo = new THREE.SphereGeometry(P.foreArmR + 0.002, 10, 10);
+    const wj = new THREE.Mesh(wjGeo, this.mats.skin);
+    wristGrp.add(wj);
 
-    // Hand
-    this._buildHand(side, wristGroup);
+    this._hand(side, wristGrp);
   }
 
-  _buildHand(side, wristGroup) {
-    const handGroup = new THREE.Group();
-    wristGroup.add(handGroup);
-    this.groups[side + 'Hand'] = handGroup;
+  _hand(side, wristGrp) {
+    const handGrp = new THREE.Group();
+    wristGrp.add(handGrp);
+    this.g[side + 'Hand'] = handGrp;
 
-    // Palm
-    const palmGeo = new THREE.BoxGeometry(B.palmW * 2, B.palmH, B.palmD * 2, 2, 2, 2);
-    this._roundBox(palmGeo, 0.005);
-    const palm = new THREE.Mesh(palmGeo, this.materials.skin);
-    palm.position.y = -B.palmH / 2;
-    handGroup.add(palm);
+    // Palm — visible, rounded
+    const palmGeo = this._roundedBox(P.palmW, P.palmH, P.palmD, 0.008);
+    const palm = new THREE.Mesh(palmGeo, this.mats.skin);
+    palm.position.y = -P.palmH / 2;
+    handGrp.add(palm);
+    addOutline(palm, palmGeo, 0.06, CHARACTERS[this.charId].outline);
 
     // Fingers
     for (const fname of FINGER_NAMES) {
-      this._buildFinger(side, fname, handGroup);
+      this._finger(side, fname, handGrp);
     }
   }
 
-  _buildFinger(side, name, handGroup) {
-    const segLens = B[name + 'Segs'];
+  _finger(side, name, handGrp) {
+    const segs = P[name + 'Segs'];
     const base = FINGER_BASES[name];
-    const mirror = side === 'left' ? -1 : 1;
+    const mir = side === 'left' ? -1 : 1;
 
-    const baseGroup = new THREE.Group();
-    baseGroup.position.set(base.x * mirror, -B.palmH + base.y, base.z);
-    handGroup.add(baseGroup);
+    const baseGrp = new THREE.Group();
+    baseGrp.position.set(base.x * mir, -P.palmH + base.y, base.z);
+    handGrp.add(baseGrp);
 
-    let parent = baseGroup;
+    let parent = baseGrp;
     const chain = [];
 
     for (let i = 0; i < 3; i++) {
-      const segLen = segLens[i];
-      const r = B.fingerR * (1 - i * 0.15);
+      const len = segs[i];
+      const r = P.fingerR * (1 - i * 0.12); // taper
 
-      const jointGroup = new THREE.Group();
-      if (i > 0) jointGroup.position.y = -segLens[i - 1];
-      parent.add(jointGroup);
+      const jGrp = new THREE.Group();
+      if (i > 0) jGrp.position.y = -segs[i - 1];
+      parent.add(jGrp);
 
-      const jGeo = createJointSphere(r + 0.002);
-      const jMesh = new THREE.Mesh(jGeo, this.materials.skin);
-      jointGroup.add(jMesh);
+      // Joint ball
+      const jGeo = new THREE.SphereGeometry(r + 0.003, 8, 8);
+      const jMesh = new THREE.Mesh(jGeo, this.mats.skinLt);
+      jGrp.add(jMesh);
 
-      const sGeo = createCapsule(r, segLen * 0.7, 6);
-      const sMesh = new THREE.Mesh(sGeo, this.materials.skin);
-      sMesh.position.y = -segLen / 2;
-      jointGroup.add(sMesh);
+      // Segment capsule
+      const sGeo = new THREE.CapsuleGeometry(r, len * 0.65, 6, 8);
+      const sMesh = new THREE.Mesh(sGeo, this.mats.skin);
+      sMesh.position.y = -len / 2;
+      jGrp.add(sMesh);
 
-      chain.push(jointGroup);
-      parent = jointGroup;
+      chain.push(jGrp);
+      parent = jGrp;
     }
 
-    // Fingertip
-    const tipGeo = new THREE.SphereGeometry(B.fingerR * 0.7, 6, 6);
-    const tip = new THREE.Mesh(tipGeo, this.materials.skin);
-    tip.position.y = -segLens[2];
+    // Rounded fingertip
+    const tipGeo = new THREE.SphereGeometry(P.fingerR * 0.85, 8, 8);
+    const tip = new THREE.Mesh(tipGeo, this.mats.skinLt);
+    tip.position.y = -segs[2];
     parent.add(tip);
 
-    this.fingerChains[side][name] = chain;
+    this.fingers[side][name] = chain;
   }
 
-  _buildLegs() {
+  _legs() {
     for (const side of [-1, 1]) {
-      const legGroup = new THREE.Group();
-      legGroup.position.set(side * 0.06, -0.06, 0);
-      this.groups.hips.add(legGroup);
+      const legGrp = new THREE.Group();
+      legGrp.position.set(side * 0.07, -0.065, 0);
+      this.g.hips.add(legGrp);
 
-      const legGeo = createCapsule(B.legR, B.legH, 8);
-      const leg = new THREE.Mesh(legGeo, this.materials.pants);
-      leg.position.y = -(B.legH / 2 + B.legR);
-      legGroup.add(leg);
+      // Upper leg
+      const ulGeo = new THREE.CapsuleGeometry(P.upperLegR, P.upperLegH, 8, 12);
+      const ul = new THREE.Mesh(ulGeo, this.mats.pants);
+      ul.position.y = -(P.upperLegH / 2 + P.upperLegR);
+      legGrp.add(ul);
 
-      const shoeGeo = new THREE.BoxGeometry(0.07, 0.04, 0.11, 2, 1, 2);
-      this._roundBox(shoeGeo, 0.01);
-      const shoe = new THREE.Mesh(shoeGeo, makeMat(0x222222));
-      shoe.position.set(0, -(B.legH + B.legR + 0.02), 0.015);
-      legGroup.add(shoe);
+      // Knee joint
+      const kneeGeo = new THREE.SphereGeometry(P.lowerLegR + 0.005, 10, 10);
+      const knee = new THREE.Mesh(kneeGeo, this.mats.pants);
+      knee.position.y = -(P.upperLegH + P.upperLegR * 2);
+      legGrp.add(knee);
+
+      // Lower leg
+      const llGeo = new THREE.CapsuleGeometry(P.lowerLegR, P.lowerLegH, 8, 12);
+      const ll = new THREE.Mesh(llGeo, this.mats.pants);
+      ll.position.y = -(P.upperLegH + P.upperLegR * 2 + P.lowerLegH / 2 + P.lowerLegR);
+      legGrp.add(ll);
+
+      // Shoe
+      const shoeGeo = this._roundedBox(P.shoeW, P.shoeH, P.shoeD, 0.015);
+      const shoe = new THREE.Mesh(shoeGeo, this.mats.shoe);
+      const shoeY = -(P.upperLegH + P.upperLegR * 2 + P.lowerLegH + P.lowerLegR * 2 + P.shoeH / 2);
+      shoe.position.set(0, shoeY, 0.015);
+      legGrp.add(shoe);
+      addOutline(shoe, shoeGeo, 0.04, CHARACTERS[this.charId].outline);
     }
   }
 
-  _roundBox(geo, amount) {
-    const pos = geo.attributes.position;
-    const v = new THREE.Vector3();
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i);
-      const len = v.length();
-      if (len > 0) {
-        v.normalize().multiplyScalar(len + amount * (1 - Math.abs(v.y) / (len || 1)) * 0.3);
-        const edge = Math.min(Math.abs(v.x), Math.abs(v.y), Math.abs(v.z));
-        if (edge < amount * 2) {
-          v.normalize().multiplyScalar(len);
-        }
-      }
-      pos.setXYZ(i, v.x, v.y, v.z);
-    }
+  // ─── Geometry helper: properly rounded box ────────────────
+
+  _roundedBox(w, h, d, r) {
+    // Use a box with beveled edges
+    const shape = new THREE.Shape();
+    const hw = w / 2 - r, hh = h / 2 - r;
+    shape.moveTo(-hw, -h / 2);
+    shape.lineTo(hw, -h / 2);
+    shape.quadraticCurveTo(w / 2, -h / 2, w / 2, -hh);
+    shape.lineTo(w / 2, hh);
+    shape.quadraticCurveTo(w / 2, h / 2, hw, h / 2);
+    shape.lineTo(-hw, h / 2);
+    shape.quadraticCurveTo(-w / 2, h / 2, -w / 2, hh);
+    shape.lineTo(-w / 2, -hh);
+    shape.quadraticCurveTo(-w / 2, -h / 2, -hw, -h / 2);
+
+    const geo = new THREE.ExtrudeGeometry(shape, {
+      depth: d, bevelEnabled: true, bevelThickness: r * 0.5,
+      bevelSize: r * 0.5, bevelSegments: 3,
+    });
+    geo.translate(0, 0, -d / 2);
     geo.computeVertexNormals();
+    return geo;
   }
 
-  _startLoop() {
+  // ─── Render loop ──────────────────────────────────────────
+
+  _loop() {
     const animate = () => {
       requestAnimationFrame(animate);
       this.renderer.render(this.scene, this.camera);
@@ -993,357 +871,215 @@ export class HumanoidAvatar {
     animate();
   }
 
-  // ─── IK and Pose Application ──────────────────────────────
+  // ─── IK solver ────────────────────────────────────────────
 
-  _landmarkToWorld(lm) {
+  _lmToWorld(lm) {
     return new THREE.Vector3(
-      (0.5 - lm[0]) * 1.2,
-      (0.5 - lm[1]) * 1.2,
-      -(lm[2] ?? 0) * 0.3
+      (0.5 - lm[0]) * 1.4,
+      (0.5 - lm[1]) * 1.4,
+      -(lm[2] ?? 0) * 0.35
     );
   }
 
-  // Two-bone IK solver for arm chain
-  _solveArmIK(targetWorld, side) {
-    const upperArmGroup = this.groups[side + 'UpperArm'];
-    const foreArmGroup = this.groups[side + 'ForeArm'];
-    const shoulderGroup = this.groups[side + 'Shoulder'];
+  _solveIK(target, side) {
+    const ua = this.g[side + 'UpperArm'];
+    const fa = this.g[side + 'ForeArm'];
+    const sh = this.g[side + 'Shoulder'];
 
-    const shoulderWorld = new THREE.Vector3();
-    shoulderGroup.getWorldPosition(shoulderWorld);
+    const shW = new THREE.Vector3();
+    sh.getWorldPosition(shW);
 
-    const toTarget = new THREE.Vector3().subVectors(targetWorld, shoulderWorld);
-    const dist = toTarget.length();
+    const L1 = P.upperArmLen + P.upperArmR * 2;
+    const L2 = P.foreArmLen + P.foreArmR * 2;
+    const d = Math.min(new THREE.Vector3().subVectors(target, shW).length(), L1 + L2 - 0.01);
 
-    const L1 = B.upperArmLen + B.upperArmR * 2;
-    const L2 = B.foreArmLen + B.foreArmR * 2;
-    const maxReach = L1 + L2 - 0.01;
+    let ce = (L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2);
+    ce = Math.max(-1, Math.min(1, ce));
+    const elbowAngle = Math.PI - Math.acos(ce);
 
-    const d = Math.min(dist, maxReach);
-
-    // Elbow angle via law of cosines
-    let cosElbow = (L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2);
-    cosElbow = Math.max(-1, Math.min(1, cosElbow));
-    const elbowAngle = Math.PI - Math.acos(cosElbow);
-
-    // Point upper arm toward target
-    const targetLocal = shoulderGroup.worldToLocal(targetWorld.clone());
-    const armDir = targetLocal.normalize();
-    const restDir = new THREE.Vector3(0, -1, 0);
-    const quat = new THREE.Quaternion().setFromUnitVectors(restDir, armDir);
-
-    upperArmGroup.quaternion.copy(quat);
-
-    // Elbow bend
-    foreArmGroup.rotation.set(0, 0, 0);
-    foreArmGroup.rotation.x = elbowAngle;
+    const local = sh.worldToLocal(target.clone()).normalize();
+    ua.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), local);
+    fa.rotation.set(elbowAngle, 0, 0);
   }
 
-  // ─── Layer C: Finger pose with DIP = 2/3 × PIP coupling ──
+  // ─── Layer C: finger coupling ─────────────────────────────
 
-  _setFingerPose(handLandmarks, side) {
-    if (!handLandmarks || handLandmarks.length < 21) return;
+  _fingerPose(hand, side) {
+    if (!hand || hand.length < 21) return;
+    const w = hand[0];
 
-    const wrist = handLandmarks[0];
-
-    for (const fname of FINGER_NAMES) {
-      const chain = this.fingerChains[side][fname];
+    for (const fn of FINGER_NAMES) {
+      const chain = this.fingers[side][fn];
       if (!chain) continue;
+      const idx = FINGER_LANDMARKS[fn];
+      const pts = idx.map(i => hand[i]);
 
-      const indices = FINGER_LANDMARKS[fname];
-      const pts = indices.map(i => handLandmarks[i]);
-
-      // Compute MCP angle (j=0)
-      const mcpAngle = this._computeJointAngle(wrist, pts[0], pts[1], fname, side);
-      chain[0].rotation.x = mcpAngle;
-
-      // Compute PIP angle (j=1)
-      const pipAngle = this._computeJointAngle(pts[0], pts[1], pts[2], fname, side);
-      chain[1].rotation.x = pipAngle;
-
-      // Layer C: Enforce θ_DIP = (2/3) × θ_PIP for non-thumb fingers
-      if (fname !== 'thumb') {
-        chain[2].rotation.x = pipAngle * WBC.DIP_PIP_RATIO;
+      // MCP
+      chain[0].rotation.x = this._jAngle(w, pts[0], pts[1], fn);
+      // PIP
+      const pip = this._jAngle(pts[0], pts[1], pts[2], fn);
+      chain[1].rotation.x = pip;
+      // DIP: enforce coupling for non-thumb
+      if (fn !== 'thumb') {
+        chain[2].rotation.x = pip * WBC.DIP_PIP;
       } else {
-        // Thumb DIP computed normally
-        const dipAngle = this._computeJointAngle(pts[1], pts[2], pts[3], fname, side);
-        chain[2].rotation.x = dipAngle;
+        chain[2].rotation.x = this._jAngle(pts[1], pts[2], pts[3], fn);
       }
 
       // Thumb abduction
-      if (fname === 'thumb') {
-        const thumbDir = [
-          pts[0][0] - wrist[0],
-          pts[0][1] - wrist[1],
-        ];
-        const abduct = Math.atan2(thumbDir[0], -thumbDir[1]) * 0.5;
-        chain[0].rotation.z = abduct * (side === 'left' ? -1 : 1);
+      if (fn === 'thumb') {
+        const d = [pts[0][0] - w[0], pts[0][1] - w[1]];
+        chain[0].rotation.z = Math.atan2(d[0], -d[1]) * 0.5 * (side === 'left' ? -1 : 1);
       }
     }
   }
 
-  _computeJointAngle(prev, curr, next, fname, side) {
+  _jAngle(prev, curr, next, fn) {
     const v1 = [curr[0] - prev[0], curr[1] - prev[1], (curr[2] ?? 0) - (prev[2] ?? 0)];
     const v2 = [next[0] - curr[0], next[1] - curr[1], (next[2] ?? 0) - (curr[2] ?? 0)];
-
     const dot = v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
-    const m1 = Math.sqrt(v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2]) || 1;
-    const m2 = Math.sqrt(v2[0] * v2[0] + v2[1] * v2[1] + v2[2] * v2[2]) || 1;
-    let angle = Math.acos(Math.max(-1, Math.min(1, dot / (m1 * m2))));
-
-    // Cross product for sign
-    const cross = v1[0] * v2[1] - v1[1] * v2[0];
-    if (cross < 0) angle = -angle;
-
-    // Clamp to biomechanical range
-    const maxFlex = fname === 'thumb' ? Math.PI * 0.5 : Math.PI * 0.55;
-    return Math.max(-0.2, Math.min(maxFlex, angle));
+    const m1 = Math.hypot(v1[0], v1[1], v1[2]) || 1;
+    const m2 = Math.hypot(v2[0], v2[1], v2[2]) || 1;
+    let a = Math.acos(Math.max(-1, Math.min(1, dot / (m1 * m2))));
+    if (v1[0] * v2[1] - v1[1] * v2[0] < 0) a = -a;
+    const mx = fn === 'thumb' ? Math.PI * 0.5 : Math.PI * 0.55;
+    return Math.max(-0.2, Math.min(mx, a));
   }
 
-  // ─── Layer C: Whole-Body Control — torso rotation + tilt ──
+  // ─── Layer C: WBC torso ───────────────────────────────────
 
-  _updateTorsoWBC(leftWrist, rightWrist) {
-    if (!this.groups.spine) return;
+  _wbc(lw, rw) {
+    if (!this.g.spine) return;
+    let ty = 0, tp = 0, n = 0, ax = 0, ay = 0;
 
-    // Compute target yaw from hand horizontal position
-    let targetYaw = 0;
-    let targetPitch = 0;
-    let handCount = 0;
-    let avgHandX = 0;
-    let avgHandY = 0;
+    if (lw) { ax += 0.5 - lw[0]; ay += 0.5 - lw[1]; n++; }
+    if (rw) { ax += 0.5 - rw[0]; ay += 0.5 - rw[1]; n++; }
 
-    if (leftWrist) {
-      avgHandX += (0.5 - leftWrist[0]);
-      avgHandY += (0.5 - leftWrist[1]);
-      handCount++;
-    }
-    if (rightWrist) {
-      avgHandX += (0.5 - rightWrist[0]);
-      avgHandY += (0.5 - rightWrist[1]);
-      handCount++;
+    if (n) {
+      ax /= n; ay /= n;
+      ty = Math.max(-WBC.MAX_YAW, Math.min(WBC.MAX_YAW, ax * 2));
+      tp = Math.max(-WBC.MAX_PITCH, Math.min(WBC.MAX_PITCH, -ay * 0.5));
     }
 
-    if (handCount > 0) {
-      avgHandX /= handCount;
-      avgHandY /= handCount;
+    this._yaw += (ty - this._yaw) * WBC.SMOOTH;
+    this._pitch += (tp - this._pitch) * WBC.SMOOTH;
+    if (!n) { this._yaw *= WBC.RETURN; this._pitch *= WBC.RETURN; }
 
-      // Yaw: ±0.5 rad based on horizontal signing space quadrant
-      targetYaw = Math.max(-WBC.MAX_TORSO_YAW,
-        Math.min(WBC.MAX_TORSO_YAW, avgHandX * 2.0));
-
-      // Pitch: lean forward for low signs, upright for high
-      // Negative Y = hands are low = lean forward slightly
-      targetPitch = Math.max(-WBC.MAX_TORSO_PITCH,
-        Math.min(WBC.MAX_TORSO_PITCH, -avgHandY * 0.5));
-    }
-
-    // Smooth exponential approach to target
-    this._torsoYaw += (targetYaw - this._torsoYaw) * WBC.TORSO_SMOOTH;
-    this._torsoPitch += (targetPitch - this._torsoPitch) * WBC.TORSO_SMOOTH;
-
-    // Decay toward neutral when no hands
-    if (handCount === 0) {
-      this._torsoYaw *= WBC.TORSO_RETURN;
-      this._torsoPitch *= WBC.TORSO_RETURN;
-    }
-
-    this.groups.spine.rotation.y = this._torsoYaw;
-    this.groups.spine.rotation.x = this._torsoPitch;
+    this.g.spine.rotation.y = this._yaw;
+    this.g.spine.rotation.x = this._pitch;
   }
 
-  // ─── FACS facial expression ───────────────────────────────
+  // ─── FACS face ────────────────────────────────────────────
 
-  _updateFaceFACS(faceData) {
-    this.facs.update(faceData);
+  _face(data) {
+    this.facs.update(data);
+    const f = this.facs;
 
-    // Apply brow positions (FACS AU1/AU2/AU4)
-    if (this.groups.browL) {
-      const offset = this.facs.getBrowOffset('left');
-      const furrow = this.facs.getBrowFurrow();
-      this.groups.browL.position.y = 0.04 + offset;
-      this.groups.browL.position.x = -0.035 + furrow; // Pinch inward for AU4
+    if (this.g.browL) {
+      this.g.browL.position.y = 0.055 + f.browUp - f.browDown;
+      this.g.browL.position.x = -0.058 + f.browPinch;
     }
-    if (this.groups.browR) {
-      const offset = this.facs.getBrowOffset('right');
-      const furrow = this.facs.getBrowFurrow();
-      this.groups.browR.position.y = 0.04 + offset;
-      this.groups.browR.position.x = 0.035 - furrow;
+    if (this.g.browR) {
+      this.g.browR.position.y = 0.055 + f.browUp - f.browDown;
+      this.g.browR.position.x = 0.058 - f.browPinch;
     }
 
-    // Apply mouth (FACS AU25/AU26/AU20)
-    if (this.groups.upperLip && this.groups.lowerLip) {
-      const openAmt = this.facs.getMouthOpen();
-      const widthScale = this.facs.getMouthWidth();
-
-      this.groups.upperLip.position.y = 0.003 + openAmt * 0.3;
-      this.groups.lowerLip.position.y = -0.003 - openAmt;
-      this.groups.upperLip.scale.x = widthScale;
-      this.groups.lowerLip.scale.x = widthScale;
+    if (this.g.upperLip && this.g.lowerLip) {
+      const o = f.mouthOpen;
+      this.g.upperLip.position.y = 0.004 + o * 0.3;
+      this.g.lowerLip.position.y = -0.004 - o;
+      this.g.upperLip.scale.x = f.mouthWide;
+      this.g.lowerLip.scale.x = f.mouthWide;
     }
   }
 
-  // ─── Frame rendering ─────────────────────────────────────
+  // ─── Frame render ─────────────────────────────────────────
 
   render(frame) {
-    if (!frame) {
-      this._setIdlePose();
-      return;
-    }
+    if (!frame) { this._idle(); return; }
 
-    let leftHand = null, rightHand = null, faceData = null;
-
+    let lh = null, rh = null, fd = null;
     if (frame.leftHand || frame.rightHand) {
-      leftHand = frame.leftHand;
-      rightHand = frame.rightHand;
-      faceData = frame.face;
+      lh = frame.leftHand; rh = frame.rightHand; fd = frame.face;
     } else if (Array.isArray(frame) && frame.length >= 21) {
-      rightHand = frame;
+      rh = frame;
     }
 
-    // Arm IK + finger pose
-    if (rightHand && rightHand.length >= 21) {
-      const wristWorld = this._landmarkToWorld(rightHand[0]);
-      this._solveArmIK(wristWorld, 'right');
-      this._setFingerPose(rightHand, 'right');
-    } else {
-      this._setArmIdle('right');
-    }
+    if (rh && rh.length >= 21) {
+      this._solveIK(this._lmToWorld(rh[0]), 'right');
+      this._fingerPose(rh, 'right');
+    } else this._armIdle('right');
 
-    if (leftHand && leftHand.length >= 21) {
-      const wristWorld = this._landmarkToWorld(leftHand[0]);
-      this._solveArmIK(wristWorld, 'left');
-      this._setFingerPose(leftHand, 'left');
-    } else {
-      this._setArmIdle('left');
-    }
+    if (lh && lh.length >= 21) {
+      this._solveIK(this._lmToWorld(lh[0]), 'left');
+      this._fingerPose(lh, 'left');
+    } else this._armIdle('left');
 
-    // FACS facial expressions
-    this._updateFaceFACS(faceData);
-
-    // Layer C: WBC torso rotation
-    const lw = leftHand ? leftHand[0] : null;
-    const rw = rightHand ? rightHand[0] : null;
-    this._updateTorsoWBC(lw, rw);
+    this._face(fd);
+    this._wbc(lh ? lh[0] : null, rh ? rh[0] : null);
   }
 
-  _setIdlePose() {
-    for (const side of ['left', 'right']) {
-      this._setArmIdle(side);
-      for (const fname of FINGER_NAMES) {
-        const chain = this.fingerChains[side][fname];
-        if (!chain) continue;
-        const curl = fname === 'thumb' ? 0.15 : 0.3;
-        for (let i = 0; i < chain.length; i++) {
-          // Apply DIP coupling even in idle
-          if (fname !== 'thumb' && i === 2) {
-            chain[i].rotation.x = chain[1].rotation.x * WBC.DIP_PIP_RATIO;
-          } else {
-            chain[i].rotation.x = curl * (i + 1) * 0.5;
-          }
-          chain[i].rotation.z = 0;
+  _idle() {
+    for (const s of ['left', 'right']) {
+      this._armIdle(s);
+      for (const fn of FINGER_NAMES) {
+        const c = this.fingers[s][fn];
+        if (!c) continue;
+        const curl = fn === 'thumb' ? 0.15 : 0.3;
+        for (let i = 0; i < c.length; i++) {
+          if (fn !== 'thumb' && i === 2) c[i].rotation.x = c[1].rotation.x * WBC.DIP_PIP;
+          else c[i].rotation.x = curl * (i + 1) * 0.5;
+          c[i].rotation.z = 0;
         }
       }
     }
-
-    // Decay face to neutral
-    this.facs._decayToNeutral();
-    this._updateFaceFACS(null);
-
-    // Decay torso
-    this._torsoYaw *= WBC.TORSO_RETURN;
-    this._torsoPitch *= WBC.TORSO_RETURN;
-    if (this.groups.spine) {
-      this.groups.spine.rotation.y = this._torsoYaw;
-      this.groups.spine.rotation.x = this._torsoPitch;
+    this.facs._decay();
+    this._face(null);
+    this._yaw *= WBC.RETURN; this._pitch *= WBC.RETURN;
+    if (this.g.spine) {
+      this.g.spine.rotation.y = this._yaw;
+      this.g.spine.rotation.x = this._pitch;
     }
   }
 
-  _setArmIdle(side) {
-    const sign = side === 'left' ? -1 : 1;
-    const ua = this.groups[side + 'UpperArm'];
-    const fa = this.groups[side + 'ForeArm'];
-    if (ua) {
-      ua.quaternion.setFromEuler(new THREE.Euler(0.1, 0, sign * 0.15));
-    }
-    if (fa) {
-      fa.rotation.set(0.35, 0, 0);
-    }
+  _armIdle(side) {
+    const s = side === 'left' ? -1 : 1;
+    const ua = this.g[side + 'UpperArm'];
+    const fa = this.g[side + 'ForeArm'];
+    if (ua) ua.quaternion.setFromEuler(new THREE.Euler(0.12, 0, s * 0.18));
+    if (fa) fa.rotation.set(0.4, 0, 0);
   }
 
-  // ─── Layer B: Minimum-Jerk trajectory interpolation ───────
+  // ─── Layer B: min-jerk interpolation ──────────────────────
 
-  /**
-   * Interpolate between frames using minimum-jerk trajectory.
-   * For each landmark coordinate, computes 5th-order polynomial
-   * coefficients from boundary conditions and evaluates at t.
-   *
-   * Boundary conditions: zero velocity and acceleration at segment
-   * boundaries (start/end of each inter-frame transition).
-   */
-  _mjLerpHand(a, b, t) {
+  _mjHand(a, b, t) {
     if (!a) return b;
     if (!b) return a;
-
-    // Use full 5th-order polynomial for each coordinate
-    return b.map((lm, i) => {
-      const x = MinimumJerkSolver.evaluate(
-        MinimumJerkSolver.computeCoefficients(a[i][0], lm[0]),
-        t
-      );
-      const y = MinimumJerkSolver.evaluate(
-        MinimumJerkSolver.computeCoefficients(a[i][1], lm[1]),
-        t
-      );
-      const z = MinimumJerkSolver.evaluate(
-        MinimumJerkSolver.computeCoefficients(a[i][2] ?? 0, lm[2] ?? 0),
-        t
-      );
-      return [x, y, z];
-    });
+    return b.map((lm, i) => [
+      MinJerk.eval(MinJerk.coeffs(a[i][0], lm[0]), t),
+      MinJerk.eval(MinJerk.coeffs(a[i][1], lm[1]), t),
+      MinJerk.eval(MinJerk.coeffs(a[i][2] ?? 0, lm[2] ?? 0), t),
+    ]);
   }
 
-  _mjLerpFace(a, b, t) {
-    if (!a || !b) return b || a;
-    return b.map((lm, i) => {
-      const x = MinimumJerkSolver.evaluate(
-        MinimumJerkSolver.computeCoefficients(a[i][0], lm[0]),
-        t
-      );
-      const y = MinimumJerkSolver.evaluate(
-        MinimumJerkSolver.computeCoefficients(a[i][1], lm[1]),
-        t
-      );
-      const z = MinimumJerkSolver.evaluate(
-        MinimumJerkSolver.computeCoefficients(a[i][2] ?? 0, lm[2] ?? 0),
-        t
-      );
-      return [x, y, z];
-    });
-  }
-
-  _mjLerpFrame(a, b, t) {
+  _mjFrame(a, b, t) {
     if (!a) return b;
     return {
-      leftHand: this._mjLerpHand(a.leftHand, b.leftHand, t),
-      rightHand: this._mjLerpHand(a.rightHand, b.rightHand, t),
-      face: this._mjLerpFace(a.face, b.face, t),
+      leftHand:  this._mjHand(a.leftHand, b.leftHand, t),
+      rightHand: this._mjHand(a.rightHand, b.rightHand, t),
+      face:      this._mjHand(a.face, b.face, t),
     };
   }
 
-  // Normalize frame format
-  _toHolisticFrame(fr) {
+  _toFrame(fr) {
     if (!fr) return null;
-    if (fr.leftHand !== undefined || fr.rightHand !== undefined) {
+    if (fr.leftHand !== undefined || fr.rightHand !== undefined)
       return { leftHand: fr.leftHand || null, rightHand: fr.rightHand || null, face: fr.face || null };
-    }
     if (Array.isArray(fr) && fr.length >= 21) {
-      if (Array.isArray(fr[0]) && fr[0].length === 3) {
-        return { leftHand: null, rightHand: fr, face: null };
-      }
-      if (Array.isArray(fr[0]) && Array.isArray(fr[0][0]) && fr[0][0].length === 3 && fr[0].length >= 21) {
-        return { leftHand: null, rightHand: fr[0], face: null };
-      }
-      return { leftHand: null, rightHand: fr, face: null };
+      const lm = Array.isArray(fr[0]) && fr[0].length === 3 ? fr
+               : Array.isArray(fr[0]?.[0]) && fr[0].length >= 21 ? fr[0]
+               : fr;
+      return { leftHand: null, rightHand: lm, face: null };
     }
     return null;
   }
@@ -1352,28 +1088,18 @@ export class HumanoidAvatar {
 
   playSequence(landmarks, speed = 1, onFrame = null, onDone = null) {
     this.seq = (landmarks || [])
-      .map(fr => this._toHolisticFrame(fr))
-      .filter(f => f !== null && (f.leftHand || f.rightHand));
-
+      .map(f => this._toFrame(f))
+      .filter(f => f && (f.leftHand || f.rightHand));
     if (!this.seq.length) return false;
 
     this.speed = speed;
-    this.fi = 0;
-    this.fAcc = 0;
+    this.fi = 0; this.fAcc = 0;
     this.prevFrame = null;
-    this.playing = true;
-    this.paused = false;
-    this._onFrame = onFrame;
-    this._onDone = onDone;
+    this.playing = true; this.paused = false;
+    this._onFrame = onFrame; this._onDone = onDone;
     this.lastT = performance.now();
-    this._trajCache.clear();
-    this._trajSegStart = -1;
-
-    // Reset FACS calibration for new sequence
-    this.facs.frameCount = 0;
-    this.facs.baseBrowEyeDist = null;
-    this.facs.baseMouthH = null;
-    this.facs.baseMouthW = null;
+    this.facs.n = 0;
+    this.facs.base = { brow: null, mH: null, mW: null };
 
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this._tick();
@@ -1383,55 +1109,38 @@ export class HumanoidAvatar {
   _tick() {
     if (!this.playing || this.paused) return;
     const now = performance.now();
-    const dt = (now - this.lastT) / 1000;
+    this.fAcc += ((now - this.lastT) / 1000) * 30 * this.speed;
     this.lastT = now;
-    this.fAcc += dt * 30 * this.speed;
 
     while (this.fAcc >= 1 && this.fi < this.seq.length - 1) {
-      this.fi++;
-      this.fAcc -= 1;
+      this.fi++; this.fAcc -= 1;
       if (this._onFrame) this._onFrame(this.fi, this.seq.length);
     }
 
     if (this.fi >= this.seq.length - 1) {
-      this.prevFrame = this.seq[this.seq.length - 1];
-      this.render(this.prevFrame);
+      this.render(this.seq[this.seq.length - 1]);
       this.playing = false;
       if (this._onDone) this._onDone();
       return;
     }
 
-    // Layer B: use minimum-jerk interpolation instead of linear lerp
     const t = Math.min(this.fAcc, 1);
-    const blended = this._mjLerpFrame(this.seq[this.fi], this.seq[this.fi + 1], t);
-    this.prevFrame = blended;
-    this.render(blended);
-
+    this.render(this._mjFrame(this.seq[this.fi], this.seq[this.fi + 1], t));
     this.rafId = requestAnimationFrame(() => this._tick());
   }
 
   togglePause() {
     this.paused = !this.paused;
-    if (!this.paused) {
-      this.lastT = performance.now();
-      this._tick();
-    }
+    if (!this.paused) { this.lastT = performance.now(); this._tick(); }
     return this.paused;
   }
 
   replay() {
-    this.fi = 0;
-    this.fAcc = 0;
-    this.prevFrame = null;
-    this.paused = false;
-    this.playing = true;
+    this.fi = 0; this.fAcc = 0; this.prevFrame = null;
+    this.paused = false; this.playing = true;
     this.lastT = performance.now();
-    this._trajCache.clear();
-    this._trajSegStart = -1;
-    this.facs.frameCount = 0;
-    this.facs.baseBrowEyeDist = null;
-    this.facs.baseMouthH = null;
-    this.facs.baseMouthW = null;
+    this.facs.n = 0;
+    this.facs.base = { brow: null, mH: null, mW: null };
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this._tick();
   }
@@ -1443,7 +1152,7 @@ export class HumanoidAvatar {
   setCharacter(id) {
     if (!CHARACTERS[id]) return;
     this.charId = id;
-    this._updateMaterials();
+    this._recolor();
   }
 
   getCharacters() {
