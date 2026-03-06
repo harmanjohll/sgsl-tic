@@ -20,6 +20,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 // ─── Avatar model paths ─────────────────────────────────────
 // Place GLB files in frontend/assets/
@@ -229,22 +230,48 @@ export class HumanoidAvatar {
     this.camera.position.set(0, 1.1, 2.8);
     this.camera.lookAt(0, 0.9, 0);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.2;
+    this.renderer.toneMappingExposure = 1.4;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.container.innerHTML = '';
     this.container.appendChild(this.renderer.domElement);
 
-    // Lighting for realistic model
-    const hemi = new THREE.HemisphereLight(0xffeedd, 0x303050, 0.8);
+    // OrbitControls for zoom/rotate/pan
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.08;
+    this.controls.enableZoom = true;
+    this.controls.enablePan = true;
+    this.controls.minDistance = 0.5;
+    this.controls.maxDistance = 8;
+    this.controls.target.set(0, 0.85, 0);
+    this.controls.update();
+
+    // Environment map for realistic reflections (avoids flat cut-out look)
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const envScene = new THREE.Scene();
+    envScene.background = new THREE.Color(0x8899bb);
+    // Add gradient lights to the env scene for soft reflections
+    const envLight1 = new THREE.DirectionalLight(0xffffff, 1);
+    envLight1.position.set(1, 2, 1);
+    envScene.add(envLight1);
+    const envLight2 = new THREE.DirectionalLight(0x4466aa, 0.5);
+    envLight2.position.set(-1, 0, -1);
+    envScene.add(envLight2);
+    this.envMap = pmrem.fromScene(envScene, 0.04).texture;
+    pmrem.dispose();
+    this.scene.environment = this.envMap;
+
+    // Lighting — 4-point studio setup for depth
+    const hemi = new THREE.HemisphereLight(0xffeedd, 0x303050, 0.6);
     this.scene.add(hemi);
 
-    const key = new THREE.DirectionalLight(0xfff8f0, 1.5);
+    const key = new THREE.DirectionalLight(0xfff8f0, 1.8);
     key.position.set(3, 4, 5);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
@@ -256,13 +283,18 @@ export class HumanoidAvatar {
     key.shadow.camera.bottom = -1;
     this.scene.add(key);
 
-    const rim = new THREE.DirectionalLight(0x8888ff, 0.4);
+    const rim = new THREE.DirectionalLight(0x8888ff, 0.6);
     rim.position.set(-3, 2, -4);
     this.scene.add(rim);
 
-    const fill = new THREE.DirectionalLight(0xffd0a0, 0.3);
+    const fill = new THREE.DirectionalLight(0xffd0a0, 0.4);
     fill.position.set(-2, 0, 3);
     this.scene.add(fill);
+
+    // Bottom fill to reduce harsh under-shadows
+    const bottom = new THREE.DirectionalLight(0xaabbcc, 0.2);
+    bottom.position.set(0, -2, 2);
+    this.scene.add(bottom);
 
     // Floor
     const floorGeo = new THREE.CircleGeometry(1.2, 48);
@@ -299,6 +331,7 @@ export class HumanoidAvatar {
       requestAnimationFrame(animate);
       const dt = this.clock.getDelta();
       if (this.mixer) this.mixer.update(dt);
+      if (this.controls) this.controls.update();
       this.renderer.render(this.scene, this.camera);
     };
     animate();
@@ -352,11 +385,24 @@ export class HumanoidAvatar {
 
     this.model = gltf.scene;
 
-    // Enable shadows on all meshes
+    // Enable shadows on all meshes, apply environment map for depth
     this.model.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
+
+        // Apply environment map for realistic reflections (avoids flat look)
+        if (child.material) {
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          mats.forEach(mat => {
+            if (mat.isMeshStandardMaterial || mat.isMeshPhysicalMaterial) {
+              mat.envMap = this.envMap;
+              mat.envMapIntensity = 0.5;
+              mat.needsUpdate = true;
+            }
+          });
+        }
+
         // Collect morph target meshes for facial expressions
         if (child.morphTargetInfluences && child.morphTargetDictionary) {
           this.morphMeshes.push(child);
@@ -394,6 +440,14 @@ export class HumanoidAvatar {
     this.camera.near = camDist * 0.01;
     this.camera.far = camDist * 10;
     this.camera.updateProjectionMatrix();
+
+    // Update orbit controls to focus on model center
+    if (this.controls) {
+      this.controls.target.set(0, height * 0.45, 0);
+      this.controls.minDistance = camDist * 0.3;
+      this.controls.maxDistance = camDist * 4;
+      this.controls.update();
+    }
 
     this.scene.add(this.model);
 
