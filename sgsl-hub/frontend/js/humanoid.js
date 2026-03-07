@@ -289,9 +289,10 @@ class FACS {
     const roll = Math.atan2(rightEar[1] - leftEar[1], rightEar[0] - leftEar[0]);
 
     const s = 0.15; // smoothing
-    this.au.headYaw += (yaw - this.au.headYaw) * s;
-    this.au.headPitch += (pitch - this.au.headPitch) * s;
-    this.au.headRoll += (roll - this.au.headRoll) * s;
+    const clamp = (v, lim) => Math.max(-lim, Math.min(lim, isFinite(v) ? v : 0));
+    this.au.headYaw += (clamp(yaw, 1.0) - this.au.headYaw) * s;
+    this.au.headPitch += (clamp(pitch, 0.8) - this.au.headPitch) * s;
+    this.au.headRoll += (clamp(roll, 0.6) - this.au.headRoll) * s;
   }
 
   _decay() {
@@ -632,6 +633,7 @@ export class HumanoidAvatar {
     this._mapFingerBones('left');
     this._mapFingerBones('right');
     this._saveRestPose();
+    this._cacheArmRestDirs();
     this._initBoneFilters();
 
     if (gltf.animations && gltf.animations.length > 0) {
@@ -771,6 +773,48 @@ export class HumanoidAvatar {
     }
   }
 
+  // Cache arm rest directions at load time (before any animation modifies bones)
+  _cacheArmRestDirs() {
+    this._armRestDir = {};
+    this._armLengths = {};
+    for (const side of ['left', 'right']) {
+      const upperArm = this.bones[side + 'UpperArm'];
+      const foreArm = this.bones[side + 'ForeArm'];
+      const hand = this.bones[side + 'Hand'];
+      if (!upperArm || !foreArm) continue;
+
+      // Get bone world positions in rest pose
+      const sPos = new THREE.Vector3();
+      const ePos = new THREE.Vector3();
+      const wPos = new THREE.Vector3();
+      upperArm.getWorldPosition(sPos);
+      foreArm.getWorldPosition(ePos);
+      if (hand) hand.getWorldPosition(wPos);
+      else foreArm.getWorldPosition(wPos);
+
+      // Cache segment lengths
+      this._armLengths[side] = {
+        L1: sPos.distanceTo(ePos) || 0.3,
+        L2: ePos.distanceTo(wPos) || 0.25,
+      };
+
+      // Cache rest direction in parent-local space
+      const parentQ = new THREE.Quaternion();
+      if (upperArm.parent) upperArm.parent.getWorldQuaternion(parentQ);
+      const parentInv = parentQ.clone().invert();
+
+      const armWorld = ePos.clone().sub(sPos);
+      if (armWorld.length() > 0.01) {
+        this._armRestDir[side] = armWorld.normalize().applyQuaternion(parentInv);
+      } else {
+        // Fallback: assume arms point sideways (T-pose)
+        this._armRestDir[side] = new THREE.Vector3(side === 'left' ? -1 : 1, 0, 0);
+      }
+
+      console.log(`[Avatar] ${side} arm rest dir: ${this._armRestDir[side].x.toFixed(2)}, ${this._armRestDir[side].y.toFixed(2)}, ${this._armRestDir[side].z.toFixed(2)}`);
+    }
+  }
+
   _resetFilters() {
     for (const f of Object.values(this._boneFilters)) {
       f.reset();
@@ -801,17 +845,18 @@ export class HumanoidAvatar {
     const hand = this.bones[side + 'Hand'];
     if (!upperArm || !foreArm) return;
 
+    // Reset upper arm to rest pose BEFORE computing world positions
+    const restUpperQ = this._restPose[side + 'UpperArm'];
+    if (restUpperQ) upperArm.quaternion.copy(restUpperQ);
+    upperArm.updateWorldMatrix(true, false);
+
     const shoulderWorld = new THREE.Vector3();
     upperArm.getWorldPosition(shoulderWorld);
 
-    const elbowWorld = new THREE.Vector3();
-    foreArm.getWorldPosition(elbowWorld);
-    const wristWorld = new THREE.Vector3();
-    if (hand) hand.getWorldPosition(wristWorld);
-    else foreArm.getWorldPosition(wristWorld);
-
-    const L1 = shoulderWorld.distanceTo(elbowWorld) || 0.3;
-    const L2 = elbowWorld.distanceTo(wristWorld) || 0.25;
+    // Use cached arm lengths from rest pose (avoids feedback loop)
+    const cached = this._armLengths[side];
+    const L1 = cached ? cached.L1 : 0.3;
+    const L2 = cached ? cached.L2 : 0.25;
 
     const toTarget = new THREE.Vector3().subVectors(target, shoulderWorld);
     const d = Math.min(toTarget.length(), L1 + L2 - 0.01);
@@ -830,39 +875,14 @@ export class HumanoidAvatar {
     const dir = toTarget.normalize();
     const localDir = dir.clone().applyQuaternion(parentInv);
 
-    // Determine rest direction from actual bone positions (auto-detects T/A/any pose)
-    const restDir = new THREE.Vector3(0, -1, 0);
-    {
-      const sWorld = new THREE.Vector3();
-      const eWorld = new THREE.Vector3();
-      upperArm.getWorldPosition(sWorld);
-      foreArm.getWorldPosition(eWorld);
-      const armWorld = eWorld.clone().sub(sWorld);
-      if (armWorld.length() > 0.01) {
-        const localArmDir = armWorld.normalize().applyQuaternion(parentInv);
-        restDir.copy(localArmDir).normalize();
-      }
-    }
+    // Use cached rest direction (computed once at model load, avoids feedback loop)
+    const restDir = this._armRestDir[side]
+      ? this._armRestDir[side].clone()
+      : new THREE.Vector3(side === 'left' ? -1 : 1, 0, 0);
 
-    // Pole vector: bias elbow slightly down and back for natural pose
-    const poleOffset = new THREE.Vector3(
-      side === 'left' ? -0.15 : 0.15,
-      -0.3,
-      -0.2
-    ).applyQuaternion(parentInv);
-
+    // Simple rotation from rest to target — no pole vector twist
     const q = new THREE.Quaternion().setFromUnitVectors(restDir, localDir);
-
-    // Apply pole vector twist
-    const forward = localDir.clone();
-    const poleDir = poleOffset.clone().normalize();
-    const right = new THREE.Vector3().crossVectors(forward, poleDir).normalize();
-    const polePlane = new THREE.Vector3().crossVectors(right, forward).normalize();
-    // Subtle twist toward pole vector
-    const twistAngle = Math.atan2(polePlane.z, polePlane.y) * 0.15;
-    const twistQ = new THREE.Quaternion().setFromAxisAngle(forward, twistAngle);
-
-    upperArm.quaternion.copy(q.multiply(twistQ));
+    upperArm.quaternion.copy(q);
 
     // Apply temporal filtering to upper arm
     this._filterBone(side + 'UpperArm', upperArm);
@@ -959,14 +979,18 @@ export class HumanoidAvatar {
   _updateFace(faceData) {
     this.facs.update(faceData);
 
-    // Head rotation from FACS
+    // Head rotation from FACS (clamped to prevent extreme tilting)
     const headBone = this.bones.head;
     if (headBone && (this.facs.au.headYaw || this.facs.au.headPitch || this.facs.au.headRoll)) {
       const restQ = this._restPose.head;
       if (restQ) headBone.quaternion.copy(restQ);
-      headBone.rotateY(this.facs.au.headYaw * 0.5);
-      headBone.rotateX(this.facs.au.headPitch * 0.3);
-      headBone.rotateZ(this.facs.au.headRoll * 0.2);
+      const MAX_HEAD = 0.35; // ~20 degrees max
+      const hy = Math.max(-MAX_HEAD, Math.min(MAX_HEAD, this.facs.au.headYaw * 0.5));
+      const hp = Math.max(-MAX_HEAD, Math.min(MAX_HEAD, this.facs.au.headPitch * 0.3));
+      const hr = Math.max(-MAX_HEAD, Math.min(MAX_HEAD, this.facs.au.headRoll * 0.2));
+      if (isFinite(hy)) headBone.rotateY(hy);
+      if (isFinite(hp)) headBone.rotateX(hp);
+      if (isFinite(hr)) headBone.rotateZ(hr);
       this._filterBone('head', headBone);
     }
 
