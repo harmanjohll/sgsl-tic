@@ -354,6 +354,7 @@ def flatten_resampled(resampled):
 def dtw_distance(seq_a, seq_b):
     """Compute DTW distance between two feature sequences.
 
+    Uses Sakoe-Chiba band constraint for O(n*w) instead of O(n*m).
     Handles sequences with different feature dimensions by truncating
     to the shorter dimension (backward compat: 59-D vs 130-D).
     """
@@ -370,10 +371,15 @@ def dtw_distance(seq_a, seq_b):
         a = a[:, :min_dim]
         b = b[:, :min_dim]
 
+    # Sakoe-Chiba band: only compute within a window around the diagonal
+    w = max(abs(n - m), max(n, m) // 4, 5)
+
     cost = np.full((n + 1, m + 1), np.inf)
     cost[0, 0] = 0.0
     for i in range(1, n + 1):
-        for j in range(1, m + 1):
+        j_start = max(1, i - w)
+        j_end = min(m, i + w)
+        for j in range(j_start, j_end + 1):
             d = float(np.linalg.norm(a[i - 1] - b[j - 1]))
             cost[i, j] = d + min(cost[i - 1, j], cost[i, j - 1], cost[i - 1, j - 1])
     path_len = n + m

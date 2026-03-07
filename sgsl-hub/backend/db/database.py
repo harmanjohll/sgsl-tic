@@ -36,13 +36,23 @@ def _extract_pg_host(url):
     return m.group(1) if m else None
 
 
+# Cached IPv4 resolution — resolve once, reuse everywhere
+_cached_ipv4 = None
+_cached_ipv4_host = None
+
+
 def _resolve_ipv4(hostname):
-    """Resolve a hostname to an IPv4 address. Returns None on failure."""
+    """Resolve a hostname to an IPv4 address. Caches the result."""
+    global _cached_ipv4, _cached_ipv4_host
+    if _cached_ipv4 and _cached_ipv4_host == hostname:
+        return _cached_ipv4
     try:
         infos = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM)
         if infos:
             ipv4 = infos[0][4][0]
-            print(f"[DB] Resolved {hostname} -> {ipv4} (IPv4)")
+            _cached_ipv4 = ipv4
+            _cached_ipv4_host = hostname
+            print(f"[DB] Resolved {hostname} -> {ipv4} (IPv4, cached)")
             return ipv4
     except socket.gaierror as e:
         print(f"[DB] WARNING: IPv4 resolution failed for {hostname}: {e}")
@@ -53,12 +63,12 @@ def _resolve_ipv4(hostname):
 
 def _conn():
     if _USE_PG:
-        # Force IPv4 to avoid Render IPv6 issues
+        # Use cached IPv4 and connection timeout
         host = _extract_pg_host(DATABASE_URL)
         ipv4 = _resolve_ipv4(host) if host else None
         if ipv4:
-            return psycopg.connect(DATABASE_URL, hostaddr=ipv4)
-        return psycopg.connect(DATABASE_URL)
+            return psycopg.connect(DATABASE_URL, hostaddr=ipv4, connect_timeout=10)
+        return psycopg.connect(DATABASE_URL, connect_timeout=10)
     conn = sqlite3.connect(_SQLITE_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")

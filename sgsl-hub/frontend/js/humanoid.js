@@ -30,10 +30,6 @@ const AVATARS = {
     name: 'Tom',
     model: 'assets/tom.glb',
   },
-  rajan: {
-    name: 'Rajan',
-    model: 'assets/rajan.glb',
-  },
 };
 
 // ─── Bone name mapping ──────────────────────────────────────
@@ -519,8 +515,12 @@ export class HumanoidAvatar {
     const BLENDER_MAP = {
       'hips':          'hips',
       'spine':         'spine',
+      'spine.001':     'spine',
+      'spine.002':     'spine1',
+      'spine.003':     'spine2',
       'chest':         'spine1',
       'chest1':        'spine2',
+      'upper_chest':   'spine2',
       'neck':          'neck',
       'head':          'head',
       'shoulder.l':    'leftShoulder',
@@ -531,6 +531,13 @@ export class HumanoidAvatar {
       'upper_arm.r':   'rightUpperArm',
       'forearm.r':     'rightForeArm',
       'hand.r':        'rightHand',
+      // Alternate Blender naming patterns
+      'upperarm.l':    'leftUpperArm',
+      'upperarm.r':    'rightUpperArm',
+      'lower_arm.l':   'leftForeArm',
+      'lower_arm.r':   'rightForeArm',
+      'lowerarm.l':    'leftForeArm',
+      'lowerarm.r':    'rightForeArm',
     };
 
     const mapped = BLENDER_MAP[lower];
@@ -654,19 +661,18 @@ export class HumanoidAvatar {
     const dir = toTarget.normalize();
     const localDir = dir.clone().applyQuaternion(parentInv);
 
-    // Determine rest direction of the arm
-    const restDir = new THREE.Vector3(0, -1, 0); // Most rigs: arm points down in T-pose
-    // For some rigs the arm might point sideways - detect from bone position
-    if (this.bones[side + 'Shoulder']) {
-      const shoulderLocal = new THREE.Vector3();
-      upperArm.getWorldPosition(shoulderLocal);
-      const elbowLocal = new THREE.Vector3();
-      foreArm.getWorldPosition(elbowLocal);
-      const armDir = elbowLocal.sub(shoulderLocal).normalize();
-      const localArmDir = armDir.applyQuaternion(parentInv);
-      if (Math.abs(localArmDir.x) > Math.abs(localArmDir.y)) {
-        // Arm extends sideways (T-pose)
-        restDir.set(side === 'left' ? -1 : 1, 0, 0);
+    // Determine rest direction of the arm from actual bone positions
+    // This detects T-pose, A-pose, or any rest pose automatically
+    const restDir = new THREE.Vector3(0, -1, 0); // fallback: arms down
+    {
+      const sWorld = new THREE.Vector3();
+      const eWorld = new THREE.Vector3();
+      upperArm.getWorldPosition(sWorld);
+      foreArm.getWorldPosition(eWorld);
+      const armWorld = eWorld.clone().sub(sWorld);
+      if (armWorld.length() > 0.01) {
+        const localArmDir = armWorld.normalize().applyQuaternion(parentInv);
+        restDir.copy(localArmDir).normalize();
       }
     }
 

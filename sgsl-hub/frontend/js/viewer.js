@@ -179,12 +179,16 @@ function buildScene() {
   container.innerHTML = '';
   container.appendChild(canvas);
 
+  // Use fallback dimensions if container is hidden (0 size)
+  const w = container.clientWidth || 400;
+  const h = container.clientHeight || 520;
+
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 100);
+  camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 100);
   camera.position.set(0, 0, 2.2);
 
   renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-  renderer.setSize(container.clientWidth, container.clientHeight);
+  renderer.setSize(w, h);
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setClearColor(0x000000, 0);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
