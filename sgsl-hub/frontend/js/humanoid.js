@@ -880,6 +880,9 @@ export class HumanoidAvatar {
       ? this._armRestDir[side].clone()
       : new THREE.Vector3(side === 'left' ? -1 : 1, 0, 0);
 
+    // Debug log
+    this._debugLogIK(side, target, shoulderWorld, d, elbowAngle, restDir, localDir);
+
     // Simple rotation from rest to target — no pole vector twist
     const q = new THREE.Quaternion().setFromUnitVectors(restDir, localDir);
     upperArm.quaternion.copy(q);
@@ -900,6 +903,7 @@ export class HumanoidAvatar {
   _fingerPose(handLM, side) {
     if (!handLM || handLM.length < 21) return;
     const wrist = handLM[0];
+    const _debugAngles = {};
 
     for (const [finger, mpIndices] of Object.entries(MP_FINGERS)) {
       const chain = this.fingerBones[side][finger];
@@ -929,6 +933,9 @@ export class HumanoidAvatar {
         const maxFlex = finger === 'Thumb' ? Math.PI * 0.5 : Math.PI * 0.55;
         angle = Math.max(-0.2, Math.min(maxFlex, angle));
 
+        if (!_debugAngles[finger]) _debugAngles[finger] = [];
+        _debugAngles[finger].push(angle);
+
         const restQ = this._restPose[`${side}_${finger}_${j}`];
         if (restQ) chain[j].quaternion.copy(restQ);
         chain[j].rotateX(angle);
@@ -944,6 +951,7 @@ export class HumanoidAvatar {
         chain[0].rotateZ(abduct * (side === 'left' ? -1 : 1));
       }
     }
+    this._debugLogFingers(side, _debugAngles);
   }
 
   // ─── Layer C: WBC Torso ───────────────────────────────────
@@ -1105,6 +1113,148 @@ export class HumanoidAvatar {
     }
   }
 
+  // ─── Debug instrumentation ─────────────────────────────────
+
+  _debugLogPlayback(rawLandmarks) {
+    const raw = rawLandmarks || [];
+    console.group('[Avatar DEBUG] Playback diagnostics');
+
+    // 1. Raw data format
+    console.log(`Raw frames: ${raw.length}, Parsed frames: ${this.seq.length}`);
+    if (raw.length > 0) {
+      const f0 = raw[0];
+      console.log('First raw frame type:', typeof f0, Array.isArray(f0) ? 'array' : '');
+      console.log('First raw frame keys:', f0 && typeof f0 === 'object' ? Object.keys(f0) : 'N/A');
+      if (f0?.rightHand) console.log('  rightHand: length=' + f0.rightHand.length + ', sample[0]=' + JSON.stringify(f0.rightHand[0]));
+      else console.warn('  rightHand: NULL/missing');
+      if (f0?.leftHand) console.log('  leftHand: length=' + f0.leftHand.length + ', sample[0]=' + JSON.stringify(f0.leftHand[0]));
+      else console.warn('  leftHand: NULL/missing');
+      if (f0?.face) console.log('  face: length=' + f0.face.length);
+      else console.warn('  face: NULL/missing');
+      if (f0?.pose) console.log('  pose: length=' + f0.pose.length);
+      else console.warn('  pose: NULL/missing');
+    }
+
+    // 2. Parsed frame sample
+    if (this.seq.length > 0) {
+      const pf = this.seq[0];
+      console.log('Parsed frame[0]:', {
+        hasLeft: !!pf.leftHand,
+        hasRight: !!pf.rightHand,
+        hasFace: !!pf.face,
+        hasPose: !!pf.pose,
+      });
+      if (pf.rightHand) {
+        const w = pf.rightHand[0];
+        console.log('  Right wrist lm:', w);
+        const worldPos = this._lmToWorld(w);
+        console.log('  Right wrist → world:', `(${worldPos.x.toFixed(3)}, ${worldPos.y.toFixed(3)}, ${worldPos.z.toFixed(3)})`);
+      }
+      if (pf.leftHand) {
+        const w = pf.leftHand[0];
+        console.log('  Left wrist lm:', w);
+        const worldPos = this._lmToWorld(w);
+        console.log('  Left wrist → world:', `(${worldPos.x.toFixed(3)}, ${worldPos.y.toFixed(3)}, ${worldPos.z.toFixed(3)})`);
+      }
+    }
+
+    // 3. Skeleton state
+    console.log('Bones found:', Object.entries(this.bones).filter(([,b]) => b).map(([k]) => k).join(', '));
+    const fingerReport = {};
+    for (const side of ['left', 'right']) {
+      fingerReport[side] = {};
+      for (const [finger, chain] of Object.entries(this.fingerBones[side])) {
+        fingerReport[side][finger] = chain.length + ' bones (' + chain.map(b => b.name).join(', ') + ')';
+      }
+    }
+    console.log('Finger bones:', fingerReport);
+
+    // 4. Arm rest directions & lengths
+    console.log('Arm rest dirs:', {
+      left: this._armRestDir?.left ? `(${this._armRestDir.left.x.toFixed(3)}, ${this._armRestDir.left.y.toFixed(3)}, ${this._armRestDir.left.z.toFixed(3)})` : 'MISSING',
+      right: this._armRestDir?.right ? `(${this._armRestDir.right.x.toFixed(3)}, ${this._armRestDir.right.y.toFixed(3)}, ${this._armRestDir.right.z.toFixed(3)})` : 'MISSING',
+    });
+    console.log('Arm lengths:', this._armLengths);
+
+    // 5. Shoulder positions
+    for (const side of ['left', 'right']) {
+      const ua = this.bones[side + 'UpperArm'];
+      if (ua) {
+        const pos = new THREE.Vector3();
+        ua.getWorldPosition(pos);
+        console.log(`  ${side} shoulder world: (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})`);
+      }
+    }
+
+    // 6. Frame variance check — are frames actually different?
+    if (this.seq.length >= 3) {
+      const frames = [this.seq[0], this.seq[Math.floor(this.seq.length / 2)], this.seq[this.seq.length - 1]];
+      const wrists = frames.map(f => {
+        const rh = f.rightHand;
+        return rh ? `(${rh[0][0].toFixed(3)},${rh[0][1].toFixed(3)})` : 'null';
+      });
+      console.log('Frame variance (right wrist @ start/mid/end):', wrists.join(' → '));
+
+      // Check finger tip positions to see if hand shapes differ
+      const tips = frames.map(f => {
+        const rh = f.rightHand;
+        if (!rh) return 'null';
+        // Index tip (8), middle tip (12), ring tip (16)
+        return `idx=${rh[8]?.[1]?.toFixed(3)} mid=${rh[12]?.[1]?.toFixed(3)}`;
+      });
+      console.log('Fingertip Y variance (start/mid/end):', tips.join(' → '));
+    }
+
+    console.groupEnd();
+
+    // Write to visible debug panel
+    const dbgEl = document.getElementById('avatar-debug');
+    if (dbgEl) {
+      const lines = [];
+      lines.push(`Frames: ${raw.length} raw → ${this.seq.length} parsed`);
+      if (raw.length > 0) {
+        const f0 = raw[0];
+        lines.push(`Data: RH=${f0?.rightHand ? f0.rightHand.length + 'pts' : 'NULL'} LH=${f0?.leftHand ? f0.leftHand.length + 'pts' : 'NULL'} Face=${f0?.face ? f0.face.length + 'pts' : 'NULL'} Pose=${f0?.pose ? f0.pose.length + 'pts' : 'NULL'}`);
+        if (f0?.rightHand?.[0]) lines.push(`RH wrist: [${f0.rightHand[0].map(v => v.toFixed(3)).join(', ')}]`);
+        if (f0?.rightHand?.[8]) lines.push(`RH idx tip: [${f0.rightHand[8].map(v => v.toFixed(3)).join(', ')}]`);
+      }
+      const boneKeys = Object.entries(this.bones).filter(([,b]) => b).map(([k]) => k);
+      lines.push(`Bones: ${boneKeys.length} mapped`);
+      for (const side of ['left', 'right']) {
+        const fc = Object.entries(this.fingerBones[side]).filter(([,c]) => c.length > 0);
+        lines.push(`${side} fingers: ${fc.length > 0 ? fc.map(([f,c]) => `${f}(${c.length})`).join(' ') : 'NONE FOUND'}`);
+      }
+      if (this._armRestDir) {
+        for (const s of ['left', 'right']) {
+          const d = this._armRestDir[s];
+          if (d) lines.push(`${s} arm rest: (${d.x.toFixed(2)}, ${d.y.toFixed(2)}, ${d.z.toFixed(2)})`);
+        }
+      }
+      dbgEl.textContent = lines.join('\n');
+    }
+  }
+
+  _debugLogIK(side, target, shoulderWorld, d, elbowAngle, restDir, localDir) {
+    if (!this._debugIKCount) this._debugIKCount = 0;
+    if (this._debugIKCount > 5) return; // Only log first few frames
+    this._debugIKCount++;
+    console.log(`[IK ${side}] target=(${target.x.toFixed(3)},${target.y.toFixed(3)},${target.z.toFixed(3)}) ` +
+      `shoulder=(${shoulderWorld.x.toFixed(3)},${shoulderWorld.y.toFixed(3)},${shoulderWorld.z.toFixed(3)}) ` +
+      `dist=${d.toFixed(3)} elbow=${(elbowAngle * 180 / Math.PI).toFixed(1)}° ` +
+      `restDir=(${restDir.x.toFixed(2)},${restDir.y.toFixed(2)},${restDir.z.toFixed(2)}) ` +
+      `localDir=(${localDir.x.toFixed(2)},${localDir.y.toFixed(2)},${localDir.z.toFixed(2)})`);
+  }
+
+  _debugLogFingers(side, fingerAngles) {
+    if (!this._debugFingerCount) this._debugFingerCount = 0;
+    if (this._debugFingerCount > 2) return;
+    this._debugFingerCount++;
+    const summary = Object.entries(fingerAngles).map(([f, angles]) =>
+      `${f}=[${angles.map(a => (a * 180 / Math.PI).toFixed(0) + '°').join(',')}]`
+    ).join(' ');
+    console.log(`[Fingers ${side}] ${summary}`);
+  }
+
   // ─── Layer B: Min-jerk interpolation ──────────────────────
 
   _mjHand(a, b, t) {
@@ -1159,6 +1309,11 @@ export class HumanoidAvatar {
     this.seq = (landmarks || [])
       .map(f => this._toFrame(f))
       .filter(f => f && (f.leftHand || f.rightHand));
+
+    // ─── DEBUG: Log frame data on playback start ───
+    this._debugIKCount = 0;
+    this._debugFingerCount = 0;
+    this._debugLogPlayback(landmarks);
 
     console.log(`[Avatar] Playing ${this.seq.length} frames (from ${(landmarks || []).length} raw)`);
     if (!this.seq.length) return false;
