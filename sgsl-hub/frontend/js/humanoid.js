@@ -677,12 +677,18 @@ export class HumanoidAvatar {
     }
 
     const BLENDER_MAP = {
-      'hips': 'hips', 'spine': 'spine', 'chest': 'spine1', 'chest1': 'spine2',
+      'hips': 'hips', 'spine': 'spine',
+      'spine.001': 'spine', 'spine.002': 'spine1', 'spine.003': 'spine2',
+      'chest': 'spine1', 'chest1': 'spine2', 'upper_chest': 'spine2',
       'neck': 'neck', 'head': 'head',
       'shoulder.l': 'leftShoulder', 'upper_arm.l': 'leftUpperArm',
       'forearm.l': 'leftForeArm', 'hand.l': 'leftHand',
       'shoulder.r': 'rightShoulder', 'upper_arm.r': 'rightUpperArm',
       'forearm.r': 'rightForeArm', 'hand.r': 'rightHand',
+      // Alternate Blender naming patterns
+      'upperarm.l': 'leftUpperArm', 'upperarm.r': 'rightUpperArm',
+      'lower_arm.l': 'leftForeArm', 'lower_arm.r': 'rightForeArm',
+      'lowerarm.l': 'leftForeArm', 'lowerarm.r': 'rightForeArm',
     };
 
     const mapped = BLENDER_MAP[lower];
@@ -824,17 +830,17 @@ export class HumanoidAvatar {
     const dir = toTarget.normalize();
     const localDir = dir.clone().applyQuaternion(parentInv);
 
-    // Determine rest direction of arm
+    // Determine rest direction from actual bone positions (auto-detects T/A/any pose)
     const restDir = new THREE.Vector3(0, -1, 0);
-    if (this.bones[side + 'Shoulder']) {
-      const sPos = new THREE.Vector3();
-      upperArm.getWorldPosition(sPos);
-      const ePos = new THREE.Vector3();
-      foreArm.getWorldPosition(ePos);
-      const armDir = ePos.sub(sPos).normalize();
-      const localArmDir = armDir.applyQuaternion(parentInv);
-      if (Math.abs(localArmDir.x) > Math.abs(localArmDir.y)) {
-        restDir.set(side === 'left' ? -1 : 1, 0, 0);
+    {
+      const sWorld = new THREE.Vector3();
+      const eWorld = new THREE.Vector3();
+      upperArm.getWorldPosition(sWorld);
+      foreArm.getWorldPosition(eWorld);
+      const armWorld = eWorld.clone().sub(sWorld);
+      if (armWorld.length() > 0.01) {
+        const localArmDir = armWorld.normalize().applyQuaternion(parentInv);
+        restDir.copy(localArmDir).normalize();
       }
     }
 

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from pathlib import Path
 import os
 import sys
+import time
 import traceback
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -32,6 +33,30 @@ from ml.recognizer import (
 app = FastAPI(title="SgSL Hub", version="3.0")  # v3: Holistic (two hands + face + pose)
 
 FRONTEND = Path(__file__).parent.parent / "frontend"
+
+# --- In-memory library cache ---
+# Avoids re-fetching all signs from DB on every recognize/retrain call
+_library_cache = None
+_library_cache_time = 0
+LIBRARY_CACHE_TTL = 60  # seconds
+
+
+def _get_library(force_refresh=False):
+    """Get sign library from cache or DB. Cache for LIBRARY_CACHE_TTL seconds."""
+    global _library_cache, _library_cache_time
+    now = time.time()
+    if not force_refresh and _library_cache is not None and (now - _library_cache_time) < LIBRARY_CACHE_TTL:
+        return _library_cache
+    _library_cache = get_all_signs_with_features()
+    _library_cache_time = now
+    return _library_cache
+
+
+def _invalidate_library_cache():
+    """Force next library fetch to hit DB."""
+    global _library_cache, _library_cache_time
+    _library_cache = None
+    _library_cache_time = 0
 
 
 @app.exception_handler(Exception)
@@ -101,6 +126,7 @@ def delete_sign(label: str):
     count = delete_sign_by_label(label)
     if count == 0:
         raise HTTPException(404, f'No sign found for "{label}"')
+    _invalidate_library_cache()
     _retrain_classifier()
     return {"status": "ok", "deleted": count}
 
@@ -124,6 +150,7 @@ def contribute(req: ContributeRequest):
     features = extract_sequence_features(req.landmarks)
     save_sign(label, req.landmarks, features, contributor)
 
+    _invalidate_library_cache()
     _retrain_classifier()
 
     return {"status": "ok", "label": label, "frames": len(req.landmarks), "features": len(features)}
@@ -138,7 +165,7 @@ def recognize(req: RecognizeRequest):
     if not query_features:
         raise HTTPException(400, "Could not extract features — no valid hand poses detected")
 
-    library = get_all_signs_with_features()
+    library = _get_library()
     if not library:
         raise HTTPException(404, "Sign library is empty — contribute some signs first")
 
@@ -162,7 +189,7 @@ def retrain():
 
 
 def _retrain_classifier():
-    library = get_all_signs_with_features()
+    library = _get_library(force_refresh=True)
     classifier.train(library)
 
 
