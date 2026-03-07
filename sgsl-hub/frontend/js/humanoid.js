@@ -433,9 +433,9 @@ export class HumanoidAvatar {
     this.model.position.x = -(box.max.x + box.min.x) / 2;
     this.model.position.z = -(box.max.z + box.min.z) / 2;
 
-    // Adjust camera based on model height
-    const camDist = Math.max(height * 1.6, 2.0);
-    this.camera.position.set(0, height * 0.55, camDist);
+    // Adjust camera — pull back enough to see full body with breathing room
+    const camDist = Math.max(height * 2.8, 3.5);
+    this.camera.position.set(0, height * 0.5, camDist);
     this.camera.lookAt(0, height * 0.45, 0);
     this.camera.near = camDist * 0.01;
     this.camera.far = camDist * 10;

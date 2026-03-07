@@ -271,4 +271,78 @@ def delete_sign_by_label(label: str):
     return count
 
 
+def _seed_from_backup():
+    """Seed local SQLite database from restore_signLibrary.sql if DB is empty."""
+    if _USE_PG:
+        return  # PostgreSQL uses the migration path instead
+
+    conn = _conn()
+    try:
+        row = conn.execute("SELECT COUNT(*) as c FROM signs").fetchone()
+        count = row["c"] if isinstance(row, dict) else row[0]
+        if count > 0:
+            return  # Already has data
+
+        # Find the restore SQL file (check common locations)
+        restore_path = None
+        for candidate in [
+            Path(__file__).parent.parent.parent.parent / "restore_signLibrary.sql",
+            Path(__file__).parent.parent.parent / "restore_signLibrary.sql",
+            Path(__file__).parent / "restore_signLibrary.sql",
+        ]:
+            if candidate.exists():
+                restore_path = candidate
+                break
+
+        if not restore_path:
+            print("[DB] No restore_signLibrary.sql found for seeding")
+            return
+
+        content = restore_path.read_text()
+        blocks = content.split(
+            'INSERT INTO public."signLibrary" (id, label, filename, created_at, landmarks, features)\nVALUES ('
+        )
+
+        imported = 0
+        for block in blocks[1:]:
+            end = block.rfind(');')
+            if end == -1:
+                continue
+            val = block[:end]
+            parts = val.split("',\n  '")
+            if len(parts) < 5:
+                continue
+
+            label = parts[1]
+            created_at = parts[3]
+            rest = "',\n  '".join(parts[4:])
+            jsonb_parts = rest.split("'::jsonb")
+            landmarks_raw = jsonb_parts[0]
+
+            features_raw = None
+            if len(jsonb_parts) > 1:
+                feat = jsonb_parts[1].strip().strip(",\n ").strip("'")
+                if feat and feat != '\\N':
+                    features_raw = feat
+
+            try:
+                json.loads(landmarks_raw)  # validate
+                conn.execute(
+                    "INSERT INTO signs (label, landmarks, features, contributor, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (label, landmarks_raw, features_raw, "backup", "verified", created_at),
+                )
+                imported += 1
+            except (json.JSONDecodeError, Exception):
+                continue
+
+        conn.commit()
+        if imported:
+            print(f"[DB] Seeded {imported} signs from {restore_path.name}")
+    except Exception as e:
+        print(f"[DB] Seed skipped: {e}")
+    finally:
+        conn.close()
+
+
 init_db()
+_seed_from_backup()
