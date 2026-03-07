@@ -610,7 +610,7 @@ export class HumanoidAvatar {
     // Camera: frame upper body for signing visibility
     // Model is normalized to 1.7m. Show head + torso + signing space.
     const camY = height * 0.55;       // chest/shoulder level
-    const camDist = height * 2.0;     // far enough to see full upper body + extended arms
+    const camDist = height * 2.8;     // far enough to see full upper body + extended arms
     this.camera.position.set(0, camY, camDist);
     this.camera.lookAt(0, camY, 0);
     this.camera.near = 0.01;
@@ -902,9 +902,12 @@ export class HumanoidAvatar {
       ? this._armRestDir[side].clone()
       : new THREE.Vector3(side === 'left' ? -1 : 1, 0, 0);
 
-    // Simple rotation from rest to target — no pole vector twist
+    // Compose delta rotation with rest quaternion (q * restQ)
+    // q maps restDir→localDir, restQ maps bone-local-axis→restDir
+    // Combined: bone-local-axis → localDir
     const q = new THREE.Quaternion().setFromUnitVectors(restDir, localDir);
-    upperArm.quaternion.copy(q);
+    const restQ = restUpperQ || new THREE.Quaternion();
+    upperArm.quaternion.multiplyQuaternions(q, restQ);
 
     // Apply temporal filtering to upper arm
     this._filterBone(side + 'UpperArm', upperArm);
