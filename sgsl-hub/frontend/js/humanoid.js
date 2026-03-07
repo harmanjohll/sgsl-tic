@@ -610,7 +610,7 @@ export class HumanoidAvatar {
     // Camera: frame upper body for signing visibility
     // Model is normalized to 1.7m. Show head + torso + signing space.
     const camY = height * 0.55;       // chest/shoulder level
-    const camDist = height * 2.8;     // far enough to see full upper body + extended arms
+    const camDist = height * 4.5;     // far enough to see full body at smaller apparent size
     this.camera.position.set(0, camY, camDist);
     this.camera.lookAt(0, camY, 0);
     this.camera.near = 0.01;
@@ -776,23 +776,23 @@ export class HumanoidAvatar {
 
   _initBoneFilters() {
     this._boneFilters = {};
-    // Arm bones get tighter filtering (less jitter on big movements)
+    // Arm bones — higher cutoff = less lag, higher beta = faster response to speed changes
     for (const side of ['left', 'right']) {
       for (const part of ['UpperArm', 'ForeArm', 'Hand']) {
-        this._boneFilters[side + part] = new QuatOneEuroFilter(1.2, 0.01);
+        this._boneFilters[side + part] = new QuatOneEuroFilter(2.5, 0.04);
       }
     }
-    // Finger bones get lighter filtering (preserve fast finger movements)
+    // Finger bones — light filtering to preserve fast finger movements
     for (const side of ['left', 'right']) {
       for (const [finger, chain] of Object.entries(this.fingerBones[side])) {
         chain.forEach((_, i) => {
-          this._boneFilters[`${side}_${finger}_${i}`] = new QuatOneEuroFilter(2.0, 0.015);
+          this._boneFilters[`${side}_${finger}_${i}`] = new QuatOneEuroFilter(3.0, 0.05);
         });
       }
     }
-    // Spine/head get smooth filtering
+    // Spine/head — moderate smoothing
     for (const k of ['spine', 'spine1', 'spine2', 'neck', 'head']) {
-      this._boneFilters[k] = new QuatOneEuroFilter(0.8, 0.005);
+      this._boneFilters[k] = new QuatOneEuroFilter(1.5, 0.02);
     }
   }
 
@@ -1246,13 +1246,18 @@ export class HumanoidAvatar {
   _tick() {
     if (!this.playing || this.paused) return;
     const now = performance.now();
-    this.fAcc += ((now - this.lastT) / 1000) * 30 * this.speed;
+    // Clamp dt to avoid large jumps (e.g. after tab switch or GC pause)
+    const dt = Math.min((now - this.lastT) / 1000, 0.05); // cap at 50ms (~20fps min)
+    this.fAcc += dt * 30 * this.speed;
     this.lastT = now;
 
-    while (this.fAcc >= 1 && this.fi < this.seq.length - 1) {
-      this.fi++; this.fAcc -= 1;
+    // Advance at most 2 frames per tick to prevent skipping
+    let steps = 0;
+    while (this.fAcc >= 1 && this.fi < this.seq.length - 1 && steps < 2) {
+      this.fi++; this.fAcc -= 1; steps++;
       if (this._onFrame) this._onFrame(this.fi, this.seq.length);
     }
+    if (this.fAcc > 1) this.fAcc = 1; // clamp residual
 
     if (this.fi >= this.seq.length - 1) {
       this.render(this.seq[this.seq.length - 1]);
