@@ -9,6 +9,7 @@ import json
 import os
 import re
 import socket
+import time
 from pathlib import Path
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -36,15 +37,18 @@ def _extract_pg_host(url):
     return m.group(1) if m else None
 
 
-# Cached IPv4 resolution — resolve once, reuse everywhere
+# Cached IPv4 resolution — cache for 5 minutes then re-resolve
 _cached_ipv4 = None
 _cached_ipv4_host = None
+_cached_ipv4_time = 0
+_IPV4_CACHE_TTL = 300  # 5 minutes
 
 
 def _resolve_ipv4(hostname):
-    """Resolve a hostname to an IPv4 address. Caches the result."""
-    global _cached_ipv4, _cached_ipv4_host
-    if _cached_ipv4 and _cached_ipv4_host == hostname:
+    """Resolve a hostname to an IPv4 address. Caches for 5 minutes."""
+    global _cached_ipv4, _cached_ipv4_host, _cached_ipv4_time
+    now = time.time()
+    if _cached_ipv4 and _cached_ipv4_host == hostname and (now - _cached_ipv4_time) < _IPV4_CACHE_TTL:
         return _cached_ipv4
     try:
         infos = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM)
@@ -52,7 +56,8 @@ def _resolve_ipv4(hostname):
             ipv4 = infos[0][4][0]
             _cached_ipv4 = ipv4
             _cached_ipv4_host = hostname
-            print(f"[DB] Resolved {hostname} -> {ipv4} (IPv4, cached)")
+            _cached_ipv4_time = now
+            print(f"[DB] Resolved {hostname} -> {ipv4} (IPv4, cached 5m)")
             return ipv4
     except socket.gaierror as e:
         print(f"[DB] WARNING: IPv4 resolution failed for {hostname}: {e}")
@@ -61,14 +66,24 @@ def _resolve_ipv4(hostname):
 
 # --- Connection helpers ---
 
-def _conn():
+def _conn(retries=3):
     if _USE_PG:
-        # Use cached IPv4 and connection timeout
         host = _extract_pg_host(DATABASE_URL)
         ipv4 = _resolve_ipv4(host) if host else None
-        if ipv4:
-            return psycopg.connect(DATABASE_URL, hostaddr=ipv4, connect_timeout=10)
-        return psycopg.connect(DATABASE_URL, connect_timeout=10)
+        last_err = None
+        for attempt in range(1, retries + 1):
+            try:
+                # Longer timeout on first attempt (DB may be waking from sleep)
+                timeout = 30 if attempt == 1 else 15
+                if ipv4:
+                    return psycopg.connect(DATABASE_URL, hostaddr=ipv4, connect_timeout=timeout)
+                return psycopg.connect(DATABASE_URL, connect_timeout=timeout)
+            except Exception as e:
+                last_err = e
+                wait = 2 ** attempt
+                print(f"[DB] Connection attempt {attempt}/{retries} failed: {e} — retrying in {wait}s")
+                time.sleep(wait)
+        raise last_err
     conn = sqlite3.connect(_SQLITE_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
