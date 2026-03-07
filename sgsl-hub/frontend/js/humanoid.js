@@ -630,6 +630,21 @@ export class HumanoidAvatar {
       }
     });
 
+    // Fallback: map bones from skeleton (traverse may miss some with isBone)
+    if (this.skeleton) {
+      console.log(`[Avatar] Skeleton has ${this.skeleton.bones.length} bones:`);
+      console.log(`[Avatar] Bone names: ${this.skeleton.bones.map(b => b.name).join(', ')}`);
+      for (const bone of this.skeleton.bones) {
+        if (!bone.isBone) console.warn(`[Avatar] Skeleton bone "${bone.name}" has isBone=${bone.isBone}`);
+        this._mapBone(bone);
+      }
+    }
+
+    // Debug: show what was mapped after all passes
+    console.log('[Avatar] After all bone mapping passes:', JSON.stringify(
+      Object.fromEntries(Object.entries(this.bones).map(([k, v]) => [k, v ? v.name : null]))
+    ));
+
     this._mapFingerBones('left');
     this._mapFingerBones('right');
     this._saveRestPose();
@@ -674,6 +689,7 @@ export class HumanoidAvatar {
       if (aliases.some(a => name === a || name.toLowerCase() === a.toLowerCase()
           || stripped === a || lower === a.toLowerCase())) {
         this.bones[key] = bone;
+        console.log(`[Bone] "${name}" → ${key} (via alias, stripped="${stripped}")`);
         return;
       }
     }
@@ -696,6 +712,9 @@ export class HumanoidAvatar {
     const mapped = BLENDER_MAP[lower];
     if (mapped && !this.bones[mapped]) {
       this.bones[mapped] = bone;
+      console.log(`[Bone] "${name}" → ${mapped} (via Blender map, stripped="${stripped}", lower="${lower}")`);
+    } else if (!mapped) {
+      console.log(`[Bone] "${name}" → UNMAPPED (stripped="${stripped}", lower="${lower}")`);
     }
   }
 
@@ -730,7 +749,16 @@ export class HumanoidAvatar {
           );
         });
 
-        if (bone) chain.push(bone);
+        if (bone) {
+          chain.push(bone);
+        } else if (i === 1) {
+          // Log first bone search failure per finger for debugging
+          console.warn(`[Finger] ${side} ${finger} bone ${i} not found. Candidates: ${candidates.join(', ')}`);
+          // Show what bones contain the finger prefix for diagnosis
+          const prefix = BLENDER_FINGER[finger];
+          const matches = boneList.filter(b => b.name.toLowerCase().includes(prefix));
+          if (matches.length) console.log(`  Possible matches: ${matches.map(b => b.name).join(', ')}`);
+        }
       }
       if (chain.length > 0) {
         this.fingerBones[side][finger] = chain;
@@ -1123,16 +1151,26 @@ export class HumanoidAvatar {
     console.log(`Raw frames: ${raw.length}, Parsed frames: ${this.seq.length}`);
     if (raw.length > 0) {
       const f0 = raw[0];
-      console.log('First raw frame type:', typeof f0, Array.isArray(f0) ? 'array' : '');
-      console.log('First raw frame keys:', f0 && typeof f0 === 'object' ? Object.keys(f0) : 'N/A');
+      const isArray = Array.isArray(f0);
+      const isObj = f0 && typeof f0 === 'object' && !isArray;
+      console.log('First raw frame:', {
+        type: typeof f0,
+        isArray,
+        isHolistic: isObj && ('rightHand' in f0 || 'leftHand' in f0),
+        keys: isObj ? Object.keys(f0) : (isArray ? `array[${f0.length}]` : 'N/A'),
+      });
+      if (isArray) {
+        console.log('  Legacy format detected — array length:', f0.length);
+        if (Array.isArray(f0[0])) console.log('  f0[0] sample:', JSON.stringify(f0[0]?.slice?.(0, 3)));
+      }
       if (f0?.rightHand) console.log('  rightHand: length=' + f0.rightHand.length + ', sample[0]=' + JSON.stringify(f0.rightHand[0]));
-      else console.warn('  rightHand: NULL/missing');
+      else if (isObj) console.warn('  rightHand: NULL/missing');
       if (f0?.leftHand) console.log('  leftHand: length=' + f0.leftHand.length + ', sample[0]=' + JSON.stringify(f0.leftHand[0]));
-      else console.warn('  leftHand: NULL/missing');
+      else if (isObj) console.warn('  leftHand: NULL/missing');
       if (f0?.face) console.log('  face: length=' + f0.face.length);
-      else console.warn('  face: NULL/missing');
+      else if (isObj) console.warn('  face: NULL/missing');
       if (f0?.pose) console.log('  pose: length=' + f0.pose.length);
-      else console.warn('  pose: NULL/missing');
+      else if (isObj) console.warn('  pose: NULL/missing');
     }
 
     // 2. Parsed frame sample
