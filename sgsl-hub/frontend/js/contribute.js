@@ -17,10 +17,11 @@ let frames = [];
 let recStart = 0;
 let timerInterval = null;
 let autoStopTimeout = null;
+let wasAutoStopped = false;
 
 const RECORD_DURATION = 4000;    // auto-stop after 4 seconds
-const TRIM_START_MS = 500;       // trim first 0.5s (hand returning from click)
-const TRIM_END_MS = 400;         // trim last 0.4s (anticipatory movement to stop)
+const TRIM_START_MS = 300;       // trim first 0.3s (hand returning from click)
+const TRIM_END_MS = 300;         // trim last 0.3s (anticipatory movement to stop)
 
 export function initContribute() {
   const enableBtn = document.getElementById('contribute-enable-camera');
@@ -85,11 +86,12 @@ export function initContribute() {
       setStatus(statusEl, `Recording for ${RECORD_DURATION / 1000}s... Perform the sign now.`, 'info');
 
       // Auto-stop after RECORD_DURATION
-      autoStopTimeout = setTimeout(() => finishRecording(statusEl, recordBtn, stopBtn), RECORD_DURATION);
+      autoStopTimeout = setTimeout(() => { wasAutoStopped = true; finishRecording(statusEl, recordBtn, stopBtn); }, RECORD_DURATION);
     });
   });
 
   stopBtn.addEventListener('click', () => {
+    wasAutoStopped = false;
     if (autoStopTimeout) { clearTimeout(autoStopTimeout); autoStopTimeout = null; }
     finishRecording(statusEl, recordBtn, stopBtn);
   });
@@ -102,14 +104,17 @@ async function finishRecording(statusEl, recordBtn, stopBtn) {
   document.getElementById('rec-badge').classList.add('hidden');
 
   // Trim start and end frames to remove button-click artefacts
-  // At ~30 fps: 0.5s = ~15 frames, 0.4s = ~12 frames
-  const fps = 30;
-  const trimStart = Math.round((TRIM_START_MS / 1000) * fps);
-  const trimEnd = Math.round((TRIM_END_MS / 1000) * fps);
-  const trimmed = frames.slice(trimStart, frames.length - trimEnd);
+  // Use actual FPS from recording rather than assuming 30fps
+  const elapsed = (Date.now() - recStart) / 1000;
+  const actualFps = frames.length / Math.max(elapsed, 0.1);
+  const trimStart = Math.round((TRIM_START_MS / 1000) * actualFps);
+  // Skip end trim on auto-stop (no anticipatory button-click movement)
+  const trimEnd = wasAutoStopped ? 0 : Math.round((TRIM_END_MS / 1000) * actualFps);
+  const endIdx = trimEnd > 0 ? frames.length - trimEnd : frames.length;
+  const trimmed = frames.slice(trimStart, endIdx);
 
-  if (trimmed.length < 5) {
-    setStatus(statusEl, 'Recording too short after trimming. Try again — hold the sign longer.', 'error');
+  if (trimmed.length < 3) {
+    setStatus(statusEl, `Recording too short (${frames.length} frames at ~${Math.round(actualFps)}fps). Try again — hold the sign longer.`, 'error');
     recordBtn.disabled = false;
     return;
   }
