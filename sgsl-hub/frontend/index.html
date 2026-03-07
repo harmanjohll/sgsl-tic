@@ -255,6 +255,12 @@
                 </div>
               </div>
               <p id="tts-status" class="status-msg"></p>
+
+              <!-- Debug Panel (toggle with console: document.getElementById('avatar-debug').hidden = false) -->
+              <details id="avatar-debug-details" class="debug-panel">
+                <summary style="cursor:pointer;font-size:12px;color:var(--muted);padding:4px 0;">Debug Info</summary>
+                <pre id="avatar-debug" style="font-size:11px;background:var(--surface);padding:8px;border-radius:4px;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;margin:4px 0 0;"></pre>
+              </details>
             </div>
           </div>
         </div>
