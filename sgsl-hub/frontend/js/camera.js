@@ -68,8 +68,9 @@ export class HolisticTracker {
   }
 
   async start() {
+    // Request wider 16:9 aspect ratio to capture more of the signer
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false,
     });
     this.video.srcObject = stream;
@@ -88,11 +89,12 @@ export class HolisticTracker {
       enableSegmentation: false,
       smoothSegmentation: false,
       refineFaceLandmarks: true,
-      minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.5,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.4,
     });
     this.holistic.onResults(results => this._processResults(results));
 
+    // Feed MediaPipe at 640x480 for performance (it downscales internally anyway)
     this.mpCamera = new window.Camera(this.video, {
       onFrame: async () => {
         if (this.running) await this.holistic.send({ image: this.video });

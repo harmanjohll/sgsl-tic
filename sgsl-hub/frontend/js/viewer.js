@@ -280,19 +280,24 @@ function parseSequence(landmarks) {
     return landmarks.filter(f => f.leftHand || f.rightHand);
   }
 
-  // Legacy: array of [21 landmarks] or [[21 landmarks]]
+  // Legacy: array of [21 landmarks] or [[21 landmarks]] or [[[x,y,z],...21]]
   const seq = landmarks
     .map(fr => {
-      if (Array.isArray(fr?.[0]) && fr[0].length === 3) {
-        // Could be [[x,y,z],...] (21 landmarks) or [[[x,y,z],...]] (wrapped)
-        if (fr.length >= 21) return { rightHand: fr, leftHand: null, face: null };
-        if (Array.isArray(fr[0]) && Array.isArray(fr[0][0]) && fr[0].length >= 21) {
-          return { rightHand: fr[0], leftHand: null, face: null };
-        }
-      }
-      if (Array.isArray(fr) && fr.length >= 21 && Array.isArray(fr[0]) && fr[0].length >= 2) {
+      if (!Array.isArray(fr)) return null;
+
+      // Direct 21 landmarks: [[x,y,z], ...] where fr.length >= 21
+      if (fr.length >= 21 && Array.isArray(fr[0]) && fr[0].length >= 2 && typeof fr[0][0] === 'number') {
         return { rightHand: fr, leftHand: null, face: null };
       }
+
+      // Wrapped format from old DB: [[[x,y,z],...21]] or [[[x,y,z],...21], [[x,y,z],...21]]
+      if (fr.length <= 2 && Array.isArray(fr[0]) && fr[0].length >= 21
+          && Array.isArray(fr[0][0]) && fr[0][0].length >= 2) {
+        const rightHand = fr[0];
+        const leftHand = fr.length === 2 && Array.isArray(fr[1]) && fr[1].length >= 21 ? fr[1] : null;
+        return { rightHand, leftHand, face: null };
+      }
+
       return null;
     })
     .filter(f => f !== null);

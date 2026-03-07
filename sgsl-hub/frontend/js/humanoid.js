@@ -226,8 +226,8 @@ export class HumanoidAvatar {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x2a2d4e);
 
-    this.camera = new THREE.PerspectiveCamera(30, w / h, 0.05, 50);
-    this.camera.position.set(0, 1.1, 2.8);
+    this.camera = new THREE.PerspectiveCamera(40, w / h, 0.05, 50);
+    this.camera.position.set(0, 1.1, 3.5);
     this.camera.lookAt(0, 0.9, 0);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -434,7 +434,7 @@ export class HumanoidAvatar {
     this.model.position.z = -(box.max.z + box.min.z) / 2;
 
     // Adjust camera — pull back enough to see full body with breathing room
-    const camDist = Math.max(height * 2.8, 3.5);
+    const camDist = Math.max(height * 3.5, 4.5);
     this.camera.position.set(0, height * 0.5, camDist);
     this.camera.lookAt(0, height * 0.45, 0);
     this.camera.near = camDist * 0.01;
@@ -826,13 +826,24 @@ export class HumanoidAvatar {
 
   _toFrame(fr) {
     if (!fr) return null;
+    // Holistic format: {leftHand, rightHand, face}
     if (fr.leftHand !== undefined || fr.rightHand !== undefined)
       return { leftHand: fr.leftHand || null, rightHand: fr.rightHand || null, face: fr.face || null };
-    if (Array.isArray(fr) && fr.length >= 21) {
-      const lm = Array.isArray(fr[0]) && fr[0].length === 3 ? fr
-               : Array.isArray(fr[0]?.[0]) && fr[0].length >= 21 ? fr[0] : fr;
-      return { leftHand: null, rightHand: lm, face: null };
+    if (!Array.isArray(fr)) return null;
+
+    // Direct 21 landmarks: [[x,y,z], ...] where fr[0] is a coordinate
+    if (fr.length >= 21 && Array.isArray(fr[0]) && typeof fr[0][0] === 'number') {
+      return { leftHand: null, rightHand: fr, face: null };
     }
+
+    // Wrapped format from old DB: [[[x,y,z],...21]] or [[[x,y,z],...21], [[x,y,z],...21]]
+    if (fr.length <= 2 && Array.isArray(fr[0]) && fr[0].length >= 21
+        && Array.isArray(fr[0][0]) && fr[0][0].length >= 2) {
+      const rightHand = fr[0];
+      const leftHand = fr.length === 2 && Array.isArray(fr[1]) && fr[1].length >= 21 ? fr[1] : null;
+      return { rightHand, leftHand, face: null };
+    }
+
     return null;
   }
 

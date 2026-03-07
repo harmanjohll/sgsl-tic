@@ -12,11 +12,13 @@ import { setStatus, toast } from './app.js';
 let tracker = null;
 let capturing = false;
 let frames = [];
+let captureStart = 0;
 let autoStopTimeout = null;
+let wasAutoStopped = false;
 
 const CAPTURE_DURATION = 4000;  // auto-stop after 4 seconds
-const TRIM_START_MS = 500;      // trim first 0.5s
-const TRIM_END_MS = 400;        // trim last 0.4s
+const TRIM_START_MS = 300;      // trim first 0.3s
+const TRIM_END_MS = 300;        // trim last 0.3s
 
 export function initRecognize() {
   const enableBtn = document.getElementById('stt-enable-camera');
@@ -67,6 +69,7 @@ export function initRecognize() {
   startBtn.addEventListener('click', () => {
     frames = [];
     capturing = true;
+    captureStart = Date.now();
     startBtn.disabled = true;
     stopBtn.disabled = false;
     resultsPanel.classList.add('hidden');
@@ -74,10 +77,11 @@ export function initRecognize() {
     setStatus(statusEl, `Capturing for ${CAPTURE_DURATION / 1000}s... Perform the sign now.`, 'info');
 
     // Auto-stop after CAPTURE_DURATION
-    autoStopTimeout = setTimeout(() => finishCapture(statusEl, startBtn, stopBtn, resultsPanel), CAPTURE_DURATION);
+    autoStopTimeout = setTimeout(() => { wasAutoStopped = true; finishCapture(statusEl, startBtn, stopBtn, resultsPanel); }, CAPTURE_DURATION);
   });
 
   stopBtn.addEventListener('click', () => {
+    wasAutoStopped = false;
     if (autoStopTimeout) { clearTimeout(autoStopTimeout); autoStopTimeout = null; }
     finishCapture(statusEl, startBtn, stopBtn, resultsPanel);
   });
@@ -89,13 +93,16 @@ async function finishCapture(statusEl, startBtn, stopBtn, resultsPanel) {
   document.getElementById('stt-rec-badge').classList.add('hidden');
 
   // Trim start and end frames to remove button-click artefacts
-  const fps = 30;
-  const trimStart = Math.round((TRIM_START_MS / 1000) * fps);
-  const trimEnd = Math.round((TRIM_END_MS / 1000) * fps);
-  const trimmed = frames.slice(trimStart, frames.length - trimEnd);
+  // Use actual FPS from capture rather than assuming 30fps
+  const elapsed = (Date.now() - captureStart) / 1000;
+  const actualFps = frames.length / Math.max(elapsed, 0.1);
+  const trimStart = Math.round((TRIM_START_MS / 1000) * actualFps);
+  const trimEnd = wasAutoStopped ? 0 : Math.round((TRIM_END_MS / 1000) * actualFps);
+  const endIdx = trimEnd > 0 ? frames.length - trimEnd : frames.length;
+  const trimmed = frames.slice(trimStart, endIdx);
 
-  if (trimmed.length < 5) {
-    setStatus(statusEl, 'Capture too short after trimming. Try again — hold the sign longer.', 'error');
+  if (trimmed.length < 3) {
+    setStatus(statusEl, `Capture too short (${frames.length} frames at ~${Math.round(actualFps)}fps). Try again — hold the sign longer.`, 'error');
     startBtn.disabled = false;
     return;
   }
