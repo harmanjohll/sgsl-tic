@@ -108,6 +108,16 @@ def login(req: LoginRequest):
 
 
 # --- API routes ---
+@app.get("/api/health")
+def health():
+    """Health check — test DB connectivity."""
+    try:
+        labels = get_all_labels()
+        return {"status": "ok", "signs": len(labels)}
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"status": "error", "detail": str(e)})
+
+
 @app.get("/api/signs")
 def list_signs():
     return get_all_labels()
