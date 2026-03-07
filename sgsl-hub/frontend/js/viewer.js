@@ -357,75 +357,103 @@ async function playLabel(label) {
   }
 }
 
-async function loadLibrary() {
+let _signs = [];
+let _searchBound = false;
+
+async function loadLibrary(retries = 3) {
   const el = document.getElementById('sign-library');
   const searchInput = document.getElementById('tts-search');
 
-  try {
-    const signs = await fetchSigns();
-    if (!signs.length) {
-      el.innerHTML = '<p class="hint">No signs yet. Contribute some first!</p>';
-      return;
-    }
-
-    function render(filter = '') {
-      const filtered = filter
-        ? signs.filter(s => s.label.toLowerCase().includes(filter.toLowerCase()))
-        : signs;
-
-      if (!filtered.length) {
-        el.innerHTML = '<p class="hint">No matching signs.</p>';
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      _signs = await fetchSigns();
+      break;
+    } catch (err) {
+      if (attempt === retries) {
+        el.innerHTML = `<p class="hint" style="color: var(--danger);">Failed to load sign library: ${err.message}<br><button class="btn btn-sm" onclick="location.reload()">Retry</button></p>`;
         return;
       }
-
-      const loggedIn = isLoggedIn();
-      el.innerHTML = filtered.map(s =>
-        `<div class="sign-library-item" data-label="${esc(s.label)}">
-          <span class="sign-label-text">${esc(s.label)}</span>
-          <span class="sign-item-actions">
-            <span class="sign-count">${s.count}</span>
-            ${loggedIn ? `<button class="sign-delete-btn" data-label="${esc(s.label)}" title="Delete sign">&times;</button>` : ''}
-          </span>
-        </div>`
-      ).join('');
-
-      el.querySelectorAll('.sign-library-item').forEach(item => {
-        item.addEventListener('click', (e) => {
-          if (e.target.closest('.sign-delete-btn')) return;
-          el.querySelectorAll('.sign-library-item').forEach(i => i.classList.remove('active'));
-          item.classList.add('active');
-          searchInput.value = item.dataset.label;
-          playLabel(item.dataset.label);
-        });
-      });
-
-      el.querySelectorAll('.sign-delete-btn').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          const label = btn.dataset.label;
-          if (!confirm(`Delete all recordings for "${label}"?`)) return;
-          try {
-            await deleteSign(label);
-            toast(`Deleted "${label}"`, 'success');
-            signs.splice(signs.findIndex(s => s.label === label), 1);
-            render(searchInput.value.trim());
-          } catch (err) {
-            toast(err.message, 'error');
-          }
-        });
-      });
+      // Wait before retrying (exponential backoff)
+      await new Promise(r => setTimeout(r, 1000 * attempt));
     }
-
-    render();
-    searchInput.addEventListener('input', () => render(searchInput.value.trim()));
-  } catch (err) {
-    el.innerHTML = `<p class="hint" style="color: var(--danger);">Failed to load: ${err.message}</p>`;
   }
+
+  if (!_signs.length) {
+    el.innerHTML = '<p class="hint">No signs yet. Contribute some first!</p>';
+    return;
+  }
+
+  renderLibrary();
+  if (!_searchBound) {
+    _searchBound = true;
+    searchInput.addEventListener('input', () => renderLibrary(searchInput.value.trim()));
+  }
+}
+
+function renderLibrary(filter = '') {
+  const el = document.getElementById('sign-library');
+  const searchInput = document.getElementById('tts-search');
+
+  const filtered = filter
+    ? _signs.filter(s => s.label.toLowerCase().includes(filter.toLowerCase()))
+    : _signs;
+
+  if (!filtered.length) {
+    el.innerHTML = '<p class="hint">No matching signs.</p>';
+    return;
+  }
+
+  const loggedIn = isLoggedIn();
+  el.innerHTML = filtered.map(s =>
+    `<div class="sign-library-item" data-label="${esc(s.label)}">
+      <span class="sign-label-text">${esc(s.label)}</span>
+      <span class="sign-item-actions">
+        <span class="sign-count">${s.count}</span>
+        ${loggedIn ? `<button class="sign-delete-btn" data-label="${esc(s.label)}" title="Delete sign">&times;</button>` : ''}
+      </span>
+    </div>`
+  ).join('');
+
+  el.querySelectorAll('.sign-library-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.sign-delete-btn')) return;
+      el.querySelectorAll('.sign-library-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      searchInput.value = item.dataset.label;
+      playLabel(item.dataset.label);
+    });
+  });
+
+  el.querySelectorAll('.sign-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const label = btn.dataset.label;
+      if (!confirm(`Delete all recordings for "${label}"?`)) return;
+      try {
+        await deleteSign(label);
+        toast(`Deleted "${label}"`, 'success');
+        _signs.splice(_signs.findIndex(s => s.label === label), 1);
+        renderLibrary(searchInput.value.trim());
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    });
+  });
 }
 
 export function initViewer() {
   if (!inited) {
     buildScene();
+    loadLibrary();
+
+    document.getElementById('tts-search').addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        const v = e.target.value.trim();
+        if (v) playLabel(v);
+      }
+    });
+  } else {
+    // Refresh library on subsequent tab switches to pick up newly contributed signs
     loadLibrary();
   }
 
@@ -435,13 +463,6 @@ export function initViewer() {
   }
 
   setStatus(document.getElementById('tts-status'), 'Select a sign from the library.', 'info');
-
-  document.getElementById('tts-search').addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-      const v = e.target.value.trim();
-      if (v) playLabel(v);
-    }
-  });
 
   document.getElementById('replay-btn')?.addEventListener('click', () => {
     if (currentSeq.length) {

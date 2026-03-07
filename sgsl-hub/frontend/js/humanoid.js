@@ -37,7 +37,7 @@ const AVATARS = {
 };
 
 // ─── Bone name mapping ──────────────────────────────────────
-// Supports Mixamo, Ready Player Me, VRM, and generic naming
+// Supports Mixamo, Ready Player Me, VRM, Blender, and generic naming
 const BONE_ALIASES = {
   hips:         ['Hips', 'mixamorigHips', 'J_Bip_C_Hips', 'hip', 'pelvis'],
   spine:        ['Spine', 'mixamorigSpine', 'J_Bip_C_Spine', 'spine'],
@@ -202,6 +202,7 @@ export class HumanoidAvatar {
     this.rafId = null;
     this._onFrame = null;
     this._onDone = null;
+    this._pendingPlay = null;
 
     // WBC
     this._yaw = 0;
@@ -226,9 +227,9 @@ export class HumanoidAvatar {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x2a2d4e);
 
-    this.camera = new THREE.PerspectiveCamera(40, w / h, 0.05, 50);
-    this.camera.position.set(0, 1.1, 3.5);
-    this.camera.lookAt(0, 0.9, 0);
+    this.camera = new THREE.PerspectiveCamera(50, w / h, 0.05, 50);
+    this.camera.position.set(0, 1.0, 5.0);
+    this.camera.lookAt(0, 0.8, 0);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setSize(w, h);
@@ -433,10 +434,10 @@ export class HumanoidAvatar {
     this.model.position.x = -(box.max.x + box.min.x) / 2;
     this.model.position.z = -(box.max.z + box.min.z) / 2;
 
-    // Adjust camera — pull back enough to see full body with breathing room
-    const camDist = Math.max(height * 3.5, 4.5);
-    this.camera.position.set(0, height * 0.5, camDist);
-    this.camera.lookAt(0, height * 0.45, 0);
+    // Adjust camera — pull back significantly so avatar is small in viewport
+    const camDist = Math.max(height * 4.5, 6.0);
+    this.camera.position.set(0, height * 0.45, camDist);
+    this.camera.lookAt(0, height * 0.4, 0);
     this.camera.near = camDist * 0.01;
     this.camera.far = camDist * 10;
     this.camera.updateProjectionMatrix();
@@ -474,35 +475,88 @@ export class HumanoidAvatar {
 
     // Log bone discovery for debugging
     const found = Object.keys(this.bones).filter(k => this.bones[k]);
+    const missing = Object.keys(this.bones).filter(k => !this.bones[k]);
     const fingers = Object.keys(this.fingerBones.left).length + Object.keys(this.fingerBones.right).length;
     const morphs = this.morphMeshes.reduce((a, m) =>
       a + Object.keys(m.morphTargetDictionary || {}).length, 0);
     console.log(`[Avatar] Loaded: ${found.length} bones, ${fingers} finger chains, ${morphs} morph targets`);
+    console.log(`[Avatar] Mapped bones: ${found.join(', ')}`);
+    if (missing.length) console.warn(`[Avatar] Missing bones: ${missing.join(', ')}`);
+
+    // Log actual skeleton bone names for debugging
+    if (this.skeleton) {
+      console.log(`[Avatar] Skeleton bones: ${this.skeleton.bones.map(b => b.name).join(', ')}`);
+    }
 
     // Apply idle pose
     this._idle();
+
+    // If playback was queued while loading, start it now
+    if (this._pendingPlay) {
+      const { landmarks, speed, onFrame, onDone } = this._pendingPlay;
+      this._pendingPlay = null;
+      this.playSequence(landmarks, speed, onFrame, onDone);
+    }
   }
 
   _mapBone(bone) {
     const name = bone.name;
+    // Strip numeric suffixes like _011, _025 (Blender exports)
+    const stripped = name.replace(/_\d+$/, '');
+    const lower = stripped.toLowerCase();
+
+    // First: try explicit aliases
     for (const [key, aliases] of Object.entries(BONE_ALIASES)) {
-      if (this.bones[key]) continue; // already found
-      if (aliases.some(a => name === a || name.toLowerCase() === a.toLowerCase())) {
+      if (this.bones[key]) continue;
+      if (aliases.some(a => name === a || name.toLowerCase() === a.toLowerCase()
+          || stripped === a || lower === a.toLowerCase())) {
         this.bones[key] = bone;
         return;
       }
+    }
+
+    // Second: Blender-style naming (e.g., shoulder.L, upper_arm.R, forearm.L, hand.R)
+    const BLENDER_MAP = {
+      'hips':          'hips',
+      'spine':         'spine',
+      'chest':         'spine1',
+      'chest1':        'spine2',
+      'neck':          'neck',
+      'head':          'head',
+      'shoulder.l':    'leftShoulder',
+      'upper_arm.l':   'leftUpperArm',
+      'forearm.l':     'leftForeArm',
+      'hand.l':        'leftHand',
+      'shoulder.r':    'rightShoulder',
+      'upper_arm.r':   'rightUpperArm',
+      'forearm.r':     'rightForeArm',
+      'hand.r':        'rightHand',
+    };
+
+    const mapped = BLENDER_MAP[lower];
+    if (mapped && !this.bones[mapped]) {
+      this.bones[mapped] = bone;
     }
   }
 
   _mapFingerBones(side) {
     if (!this.skeleton) return;
     const Side = side === 'left' ? 'Left' : 'Right';
+    const sideChar = side === 'left' ? 'L' : 'R';
     const boneList = this.skeleton.bones;
+
+    // Map our finger names to Blender-style prefixes
+    const BLENDER_FINGER = {
+      Thumb:  'thumb',
+      Index:  'f_index',
+      Middle: 'f_middle',
+      Ring:   'f_ring',
+      Pinky:  'f_pinky',
+    };
 
     for (const finger of FINGER_NAMES_MAP) {
       const chain = [];
 
-      // Try multiple naming conventions
       for (let i = 1; i <= 3; i++) {
         const candidates = [
           // Mixamo
@@ -510,16 +564,23 @@ export class HumanoidAvatar {
           // RPM / generic
           `${Side}Hand${finger}${i}`,
           // VRM
-          `J_Bip_${side === 'left' ? 'L' : 'R'}_${finger}${i}`,
+          `J_Bip_${sideChar}_${finger}${i}`,
           // Lowercase
           `${side}Hand${finger}${i}`,
           // With underscore
           `${Side}_Hand_${finger}_${i}`,
+          // Blender: e.g. f_index.01.L, thumb.02.R
+          `${BLENDER_FINGER[finger]}.0${i}.${sideChar}`,
         ];
 
-        const bone = boneList.find(b =>
-          candidates.some(c => b.name === c || b.name.toLowerCase() === c.toLowerCase())
-        );
+        // Match with or without numeric suffix (_032, _047, etc.)
+        const bone = boneList.find(b => {
+          const stripped = b.name.replace(/_\d+$/, '');
+          return candidates.some(c =>
+            b.name === c || b.name.toLowerCase() === c.toLowerCase()
+            || stripped === c || stripped.toLowerCase() === c.toLowerCase()
+          );
+        });
 
         if (bone) chain.push(bone);
       }
@@ -850,9 +911,18 @@ export class HumanoidAvatar {
   // ─── Playback API ─────────────────────────────────────────
 
   playSequence(landmarks, speed = 1, onFrame = null, onDone = null) {
+    // Queue playback if model hasn't loaded yet
+    if (!this.loaded) {
+      console.log('[Avatar] Model still loading — queuing playback');
+      this._pendingPlay = { landmarks, speed, onFrame, onDone };
+      return true;
+    }
+
     this.seq = (landmarks || [])
       .map(f => this._toFrame(f))
       .filter(f => f && (f.leftHand || f.rightHand));
+
+    console.log(`[Avatar] Playing ${this.seq.length} frames (from ${(landmarks || []).length} raw)`);
     if (!this.seq.length) return false;
 
     this.speed = speed;
