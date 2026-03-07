@@ -591,15 +591,16 @@ export class HumanoidAvatar {
       }
     });
 
-    // Normalize scale
+    // Normalize scale — always scale to target height for consistent framing
     const box = new THREE.Box3().setFromObject(this.model);
     const rawHeight = box.max.y - box.min.y;
     const TARGET_HEIGHT = 1.7;
-    if (rawHeight > 10 || rawHeight < 0.1) {
+    if (rawHeight > 0.01) {
       const s = TARGET_HEIGHT / rawHeight;
       this.model.scale.set(s, s, s);
       box.setFromObject(this.model);
     }
+    console.log(`[Avatar] Model height: raw=${rawHeight.toFixed(2)}, scaled=${(box.max.y - box.min.y).toFixed(2)}`);
 
     const height = box.max.y - box.min.y;
     this.model.position.y = -box.min.y;
@@ -607,17 +608,19 @@ export class HumanoidAvatar {
     this.model.position.z = -(box.max.z + box.min.z) / 2;
 
     // Camera: frame upper body for signing visibility
-    const camDist = Math.max(height * 3.0, 4.0);
-    this.camera.position.set(0, height * 0.5, camDist);
-    this.camera.lookAt(0, height * 0.45, 0);
-    this.camera.near = camDist * 0.01;
-    this.camera.far = camDist * 10;
+    // Position camera at chest level, far enough to see torso + hands
+    const camY = height * 0.55;  // chest/shoulder level
+    const camDist = height * 1.2; // close enough to see hand details
+    this.camera.position.set(0, camY, camDist);
+    this.camera.lookAt(0, camY * 0.95, 0);
+    this.camera.near = 0.01;
+    this.camera.far = camDist * 20;
     this.camera.updateProjectionMatrix();
 
     if (this.controls) {
-      this.controls.target.set(0, height * 0.45, 0);
+      this.controls.target.set(0, camY * 0.95, 0);
       this.controls.minDistance = camDist * 0.3;
-      this.controls.maxDistance = camDist * 4;
+      this.controls.maxDistance = camDist * 5;
       this.controls.update();
     }
 
@@ -699,14 +702,23 @@ export class HumanoidAvatar {
       'spine.001': 'spine', 'spine.002': 'spine1', 'spine.003': 'spine2',
       'chest': 'spine1', 'chest1': 'spine2', 'upper_chest': 'spine2',
       'neck': 'neck', 'head': 'head',
+      // Blender with dots
       'shoulder.l': 'leftShoulder', 'upper_arm.l': 'leftUpperArm',
       'forearm.l': 'leftForeArm', 'hand.l': 'leftHand',
       'shoulder.r': 'rightShoulder', 'upper_arm.r': 'rightUpperArm',
       'forearm.r': 'rightForeArm', 'hand.r': 'rightHand',
-      // Alternate Blender naming patterns
+      // Blender dotless (Three.js strips dots from bone names)
+      'shoulderl': 'leftShoulder', 'upper_arml': 'leftUpperArm',
+      'forearml': 'leftForeArm', 'handl': 'leftHand',
+      'shoulderr': 'rightShoulder', 'upper_armr': 'rightUpperArm',
+      'forearmr': 'rightForeArm', 'handr': 'rightHand',
+      // Alternate patterns
       'upperarm.l': 'leftUpperArm', 'upperarm.r': 'rightUpperArm',
+      'upper_arml': 'leftUpperArm', 'upper_armr': 'rightUpperArm',
       'lower_arm.l': 'leftForeArm', 'lower_arm.r': 'rightForeArm',
       'lowerarm.l': 'leftForeArm', 'lowerarm.r': 'rightForeArm',
+      'lower_arml': 'leftForeArm', 'lower_armr': 'rightForeArm',
+      'lowerarml': 'leftForeArm', 'lowerarmr': 'rightForeArm',
     };
 
     const mapped = BLENDER_MAP[lower];
@@ -732,13 +744,17 @@ export class HumanoidAvatar {
     for (const finger of FINGER_NAMES_MAP) {
       const chain = [];
       for (let i = 1; i <= 3; i++) {
+        const bfName = BLENDER_FINGER[finger];
         const candidates = [
           `mixamorig${Side}Hand${finger}${i}`,
           `${Side}Hand${finger}${i}`,
           `J_Bip_${sideChar}_${finger}${i}`,
           `${side}Hand${finger}${i}`,
           `${Side}_Hand_${finger}_${i}`,
-          `${BLENDER_FINGER[finger]}.0${i}.${sideChar}`,
+          `${bfName}.0${i}.${sideChar}`,         // Blender with dots: f_index.01.L
+          `${bfName}0${i}${sideChar}`,            // Blender dotless: f_index01L (Three.js strips dots)
+          `${bfName}.0${i}.${sideChar.toLowerCase()}`, // lowercase side
+          `${bfName}0${i}${sideChar.toLowerCase()}`,   // dotless + lowercase
         ];
 
         const bone = boneList.find(b => {
