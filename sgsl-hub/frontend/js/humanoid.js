@@ -7,10 +7,12 @@
    Architecture:
      1. GLTFLoader loads .glb from assets/
      2. Auto-detects skeleton bone names (Mixamo, RPM, VRM, generic)
-     3. Two-bone IK maps wrist landmarks → shoulder-elbow-wrist chain
+     3. Two-bone IK with pole vectors maps wrist → arm chain
      4. Per-finger rotation from MediaPipe 21-point hand data
-     5. FACS facial expression via morph targets / blendshapes
-     6. Whole-body control: torso rotation ±0.5 rad from signing space
+     5. Enhanced FACS facial expression via morph targets
+     6. Whole-body control: torso rotation from signing space
+     7. One-Euro filter for temporal smoothing on all bones
+     8. Idle breathing animation for lifelike presence
 
    Biomechanical layers:
      A — DQS-ready (for SkinnedMesh models)
@@ -23,21 +25,12 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 // ─── Avatar model paths ─────────────────────────────────────
-// Place GLB files in frontend/assets/
-// Each character maps to a model file
 const AVATARS = {
-  tom: {
-    name: 'Tom',
-    model: 'assets/tom.glb',
-  },
-  rajan: {
-    name: 'Rajan',
-    model: 'assets/rajan.glb',
-  },
+  tom: { name: 'Tom', model: 'assets/tom.glb' },
+  rajan: { name: 'Rajan', model: 'assets/rajan.glb' },
 };
 
 // ─── Bone name mapping ──────────────────────────────────────
-// Supports Mixamo, Ready Player Me, VRM, Blender, and generic naming
 const BONE_ALIASES = {
   hips:         ['Hips', 'mixamorigHips', 'J_Bip_C_Hips', 'hip', 'pelvis'],
   spine:        ['Spine', 'mixamorigSpine', 'J_Bip_C_Spine', 'spine'],
@@ -57,16 +50,8 @@ const BONE_ALIASES = {
   rightHand:     ['RightHand', 'mixamorigRightHand', 'J_Bip_R_Hand', 'rightHand'],
 };
 
-// Finger bone name patterns
-// Mixamo: LeftHandIndex1, LeftHandIndex2, LeftHandIndex3
-// RPM:    leftHandIndex1, leftHandIndex2, leftHandIndex3
 const FINGER_NAMES_MAP = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
-const FINGER_PREFIXES = {
-  left: ['LeftHand', 'mixamorigLeftHand', 'J_Bip_L_', 'leftHand'],
-  right: ['RightHand', 'mixamorigRightHand', 'J_Bip_R_', 'rightHand'],
-};
 
-// MediaPipe hand landmark indices per finger
 const MP_FINGERS = {
   Thumb:  [1, 2, 3, 4],
   Index:  [5, 6, 7, 8],
@@ -75,7 +60,6 @@ const MP_FINGERS = {
   Pinky:  [17, 18, 19, 20],
 };
 
-// Layer C constants
 const WBC = {
   MAX_YAW: 0.5,
   MAX_PITCH: 0.15,
@@ -83,6 +67,91 @@ const WBC = {
   RETURN: 0.92,
   DIP_PIP: 2 / 3,
 };
+
+
+// ═══════════════════════════════════════════════════════════════
+// One-Euro Filter — temporal smoothing for bone rotations
+// Reduces jitter while preserving fast movements
+// ═══════════════════════════════════════════════════════════════
+
+class OneEuroFilter {
+  constructor(minCutoff = 1.0, beta = 0.007, dCutoff = 1.0) {
+    this.minCutoff = minCutoff;
+    this.beta = beta;
+    this.dCutoff = dCutoff;
+    this.xPrev = null;
+    this.dxPrev = null;
+    this.tPrev = null;
+  }
+
+  _alpha(cutoff, dt) {
+    const tau = 1.0 / (2 * Math.PI * cutoff);
+    return 1.0 / (1.0 + tau / dt);
+  }
+
+  filter(x, t) {
+    if (this.tPrev === null) {
+      this.xPrev = x;
+      this.dxPrev = 0;
+      this.tPrev = t;
+      return x;
+    }
+
+    const dt = Math.max(t - this.tPrev, 1e-6);
+    const dx = (x - this.xPrev) / dt;
+
+    const adx = this._alpha(this.dCutoff, dt);
+    const dxHat = adx * dx + (1 - adx) * this.dxPrev;
+
+    const cutoff = this.minCutoff + this.beta * Math.abs(dxHat);
+    const ax = this._alpha(cutoff, dt);
+    const xHat = ax * x + (1 - ax) * this.xPrev;
+
+    this.xPrev = xHat;
+    this.dxPrev = dxHat;
+    this.tPrev = t;
+    return xHat;
+  }
+
+  reset() {
+    this.xPrev = null;
+    this.dxPrev = null;
+    this.tPrev = null;
+  }
+}
+
+// Quaternion-aware One-Euro filter (filters each XYZW component)
+class QuatOneEuroFilter {
+  constructor(minCutoff = 1.5, beta = 0.01) {
+    this.filters = [
+      new OneEuroFilter(minCutoff, beta),
+      new OneEuroFilter(minCutoff, beta),
+      new OneEuroFilter(minCutoff, beta),
+      new OneEuroFilter(minCutoff, beta),
+    ];
+    this._prev = null;
+  }
+
+  filter(q, t) {
+    // Ensure shortest path (flip quaternion if needed)
+    if (this._prev && q.dot(this._prev) < 0) {
+      q = new THREE.Quaternion(-q.x, -q.y, -q.z, -q.w);
+    }
+    const out = new THREE.Quaternion(
+      this.filters[0].filter(q.x, t),
+      this.filters[1].filter(q.y, t),
+      this.filters[2].filter(q.z, t),
+      this.filters[3].filter(q.w, t),
+    ).normalize();
+    this._prev = out.clone();
+    return out;
+  }
+
+  reset() {
+    this.filters.forEach(f => f.reset());
+    this._prev = null;
+  }
+}
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -110,13 +179,29 @@ class MinJerk {
 
 
 // ═══════════════════════════════════════════════════════════════
-// FACS — Facial Action Coding System (morph target driver)
+// Enhanced FACS — Facial Action Coding System
+// Now supports more AUs for sign language NMMs
 // ═══════════════════════════════════════════════════════════════
 
 class FACS {
   constructor() {
-    this.au = { 1: 0, 2: 0, 4: 0, 25: 0, 26: 0, 20: 0 };
-    this.base = { brow: null, mH: null, mW: null };
+    // Extended AU set for sign language NMMs
+    this.au = {
+      1: 0, 2: 0, 4: 0,       // brow raise inner/outer, furrow
+      5: 0,                     // upper lid raise (wide eyes)
+      6: 0,                     // cheek raise (squint)
+      9: 0,                     // nose wrinkle
+      10: 0,                    // upper lip raise
+      12: 0,                    // lip corner pull (smile)
+      15: 0,                    // lip corner depress (frown)
+      20: 0,                    // lip stretch
+      25: 0, 26: 0,            // lips part / jaw drop
+      // Head orientation (from pose landmarks)
+      headYaw: 0,
+      headPitch: 0,
+      headRoll: 0,
+    };
+    this.base = { brow: null, mH: null, mW: null, lipW: null, cheekY: null };
     this.n = 0;
   }
 
@@ -124,42 +209,100 @@ class FACS {
     if (!face || face.length < 32) { this._decay(); return; }
     this.n++;
 
+    // Brow heights (inner/outer relative to eye top)
     const ib = ((face[0][1] - face[12][1]) + (face[5][1] - face[16][1])) / 2;
     const ob = ((face[4][1] - face[12][1]) + (face[9][1] - face[16][1])) / 2;
     const ab = (ib + ob) / 2;
-    const mH = Math.abs(face[26][1] - face[25][1]);
-    const mW = Math.abs(face[22][0] - face[21][0]);
 
+    // Mouth measurements
+    const mH = Math.abs(face[26][1] - face[25][1]);  // vertical opening
+    const mW = Math.abs(face[22][0] - face[21][0]);  // horizontal width
+    const lipW = Math.abs(face[27][0] - face[28][0]); // inner lip width
+
+    // Eye openness (top-bottom distance)
+    const eyeOpenL = Math.abs(face[12][1] - face[13][1]);
+    const eyeOpenR = Math.abs(face[16][1] - face[17][1]);
+    const eyeOpen = (eyeOpenL + eyeOpenR) / 2;
+
+    // Cheek height (for squint detection)
+    const cheekY = (face[12][1] + face[16][1]) / 2;
+
+    // Calibrate baseline from first 5 frames
     if (this.n <= 5) {
       const f = (v, o) => o ? o * 0.7 + v * 0.3 : v;
       this.base.brow = f(ab, this.base.brow);
       this.base.mH = f(mH, this.base.mH);
       this.base.mW = f(mW, this.base.mW);
+      this.base.lipW = f(lipW, this.base.lipW);
+      this.base.cheekY = f(cheekY, this.base.cheekY);
+      this.base.eyeOpen = f(eyeOpen, this.base.eyeOpen);
     }
 
     const bb = this.base.brow || -0.03;
     const bh = this.base.mH || 0.02;
     const bw = this.base.mW || 0.06;
+    const beo = this.base.eyeOpen || 0.02;
 
+    const clamp = (v) => Math.max(0, Math.min(1, v));
     const raw = {
-      1:  Math.max(0, Math.min(1, (bb - ib) * 15)),
-      2:  Math.max(0, Math.min(1, (bb - ob) * 15)),
-      4:  Math.max(0, Math.min(1, (ab - bb) * 12)),
-      25: Math.max(0, Math.min(1, (mH - bh) * 20)),
-      26: Math.max(0, Math.min(1, (mH - bh * 1.5) * 15)),
-      20: Math.max(0, Math.min(1, (mW - bw) * 12)),
+      1:  clamp((bb - ib) * 15),
+      2:  clamp((bb - ob) * 15),
+      4:  clamp((ab - bb) * 12),
+      5:  clamp((eyeOpen - beo) * 20),            // wide eyes
+      6:  clamp((beo - eyeOpen) * 15),             // squint
+      9:  clamp((ab - bb) * 8),                    // nose wrinkle (correlated with AU4)
+      10: 0,                                        // placeholder
+      12: clamp((mW - bw) * 8),                    // smile
+      15: clamp((bw - mW) * 8),                    // frown
+      20: clamp((mW - bw) * 12),                   // lip stretch
+      25: clamp((mH - bh) * 20),                   // lips part
+      26: clamp((mH - bh * 1.5) * 15),             // jaw drop
     };
 
-    for (const k in this.au) this.au[k] += (raw[k] - this.au[k]) * 0.25;
+    // Smooth towards raw values
+    const alpha = 0.25;
+    for (const k of Object.keys(raw)) {
+      this.au[k] += (raw[k] - this.au[k]) * alpha;
+    }
+  }
+
+  // Update head orientation from pose landmarks
+  updateHead(pose) {
+    if (!pose || pose.length < 12) return;
+    // Use nose (0), left ear (7), right ear (8) from pose landmarks
+    const nose = pose[0];
+    const leftEar = pose[7];
+    const rightEar = pose[8];
+
+    if (!nose || !leftEar || !rightEar) return;
+
+    // Yaw: horizontal offset of nose between ears
+    const earMidX = (leftEar[0] + rightEar[0]) / 2;
+    const earDist = Math.abs(leftEar[0] - rightEar[0]) || 0.1;
+    const yaw = ((nose[0] - earMidX) / earDist) * 0.8;
+
+    // Pitch: vertical offset of nose relative to ears
+    const earMidY = (leftEar[1] + rightEar[1]) / 2;
+    const pitch = ((nose[1] - earMidY) / earDist) * 0.6;
+
+    // Roll: ear tilt
+    const roll = Math.atan2(rightEar[1] - leftEar[1], rightEar[0] - leftEar[0]);
+
+    const s = 0.15; // smoothing
+    this.au.headYaw += (yaw - this.au.headYaw) * s;
+    this.au.headPitch += (pitch - this.au.headPitch) * s;
+    this.au.headRoll += (roll - this.au.headRoll) * s;
   }
 
   _decay() {
-    for (const k in this.au) this.au[k] *= 0.92;
+    for (const k of Object.keys(this.au)) {
+      if (typeof this.au[k] === 'number') this.au[k] *= 0.92;
+    }
   }
 
   reset() {
-    for (const k in this.au) this.au[k] = 0;
-    this.base = { brow: null, mH: null, mW: null };
+    for (const k of Object.keys(this.au)) this.au[k] = 0;
+    this.base = { brow: null, mH: null, mW: null, lipW: null, cheekY: null };
     this.n = 0;
   }
 }
@@ -181,10 +324,10 @@ export class HumanoidAvatar {
     this.renderer = null;
     this.model = null;
     this.skeleton = null;
-    this.bones = {};        // normalized name → THREE.Bone
-    this.fingerBones = { left: {}, right: {} }; // side → finger → [bone1, bone2, bone3]
-    this.morphMeshes = [];  // meshes with morph targets
-    this.mixer = null;      // animation mixer (for idle anims)
+    this.bones = {};
+    this.fingerBones = { left: {}, right: {} };
+    this.morphMeshes = [];
+    this.mixer = null;
     this.clock = new THREE.Clock();
 
     // Loading state
@@ -204,6 +347,9 @@ export class HumanoidAvatar {
     this._onDone = null;
     this._pendingPlay = null;
 
+    // Temporal smoothing — One-Euro filters per bone
+    this._boneFilters = {};
+
     // WBC
     this._yaw = 0;
     this._pitch = 0;
@@ -211,8 +357,12 @@ export class HumanoidAvatar {
     // FACS
     this.facs = new FACS();
 
-    // Rest pose quaternions (saved on load for blending back)
+    // Rest pose quaternions
     this._restPose = {};
+
+    // Idle breathing
+    this._breathPhase = 0;
+    this._breathRate = 0.25; // Hz (one breath per 4 seconds)
 
     this._initScene();
     this._loadModel(AVATARS[this.charId]?.model);
@@ -242,7 +392,7 @@ export class HumanoidAvatar {
     this.container.innerHTML = '';
     this.container.appendChild(this.renderer.domElement);
 
-    // OrbitControls for zoom/rotate/pan
+    // OrbitControls
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
@@ -253,11 +403,10 @@ export class HumanoidAvatar {
     this.controls.target.set(0, 0.85, 0);
     this.controls.update();
 
-    // Environment map for realistic reflections (avoids flat cut-out look)
+    // Environment map for realistic reflections
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const envScene = new THREE.Scene();
     envScene.background = new THREE.Color(0x8899bb);
-    // Add gradient lights to the env scene for soft reflections
     const envLight1 = new THREE.DirectionalLight(0xffffff, 1);
     envLight1.position.set(1, 2, 1);
     envScene.add(envLight1);
@@ -268,7 +417,7 @@ export class HumanoidAvatar {
     pmrem.dispose();
     this.scene.environment = this.envMap;
 
-    // Lighting — 4-point studio setup for depth
+    // Lighting — 4-point studio setup
     const hemi = new THREE.HemisphereLight(0xffeedd, 0x303050, 0.6);
     this.scene.add(hemi);
 
@@ -292,7 +441,6 @@ export class HumanoidAvatar {
     fill.position.set(-2, 0, 3);
     this.scene.add(fill);
 
-    // Bottom fill to reduce harsh under-shadows
     const bottom = new THREE.DirectionalLight(0xaabbcc, 0.2);
     bottom.position.set(0, -2, 2);
     this.scene.add(bottom);
@@ -327,15 +475,47 @@ export class HumanoidAvatar {
       this.camera.updateProjectionMatrix();
     }).observe(this.container);
 
-    // Render loop
+    // Render loop with idle breathing
     const animate = () => {
       requestAnimationFrame(animate);
       const dt = this.clock.getDelta();
       if (this.mixer) this.mixer.update(dt);
       if (this.controls) this.controls.update();
+
+      // Idle breathing when not playing
+      if (this.loaded && !this.playing) {
+        this._breathe(dt);
+      }
+
       this.renderer.render(this.scene, this.camera);
     };
     animate();
+  }
+
+  // ─── Idle breathing ────────────────────────────────────────
+
+  _breathe(dt) {
+    this._breathPhase += dt * this._breathRate * Math.PI * 2;
+    const breath = Math.sin(this._breathPhase) * 0.003;
+
+    const spine = this.bones.spine1 || this.bones.spine;
+    if (spine) {
+      const rest = this._restPose[spine === this.bones.spine1 ? 'spine1' : 'spine'];
+      if (rest) {
+        spine.quaternion.copy(rest);
+        spine.rotateX(breath);
+      }
+    }
+
+    // Subtle shoulder lift
+    for (const side of ['left', 'right']) {
+      const shoulder = this.bones[side + 'Shoulder'];
+      const key = side + 'Shoulder';
+      if (shoulder && this._restPose[key]) {
+        shoulder.quaternion.copy(this._restPose[key]);
+        shoulder.rotateZ(breath * 0.5 * (side === 'left' ? 1 : -1));
+      }
+    }
   }
 
   // ─── GLB Loading ──────────────────────────────────────────
@@ -378,7 +558,6 @@ export class HumanoidAvatar {
   }
 
   _onModelLoaded(gltf) {
-    // Remove loading indicator
     if (this.loadingEl) {
       this.loadingEl.remove();
       this.loadingEl = null;
@@ -386,13 +565,11 @@ export class HumanoidAvatar {
 
     this.model = gltf.scene;
 
-    // Enable shadows on all meshes, apply environment map for depth
     this.model.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
 
-        // Apply environment map for realistic reflections (avoids flat look)
         if (child.material) {
           const mats = Array.isArray(child.material) ? child.material : [child.material];
           mats.forEach(mat => {
@@ -404,45 +581,38 @@ export class HumanoidAvatar {
           });
         }
 
-        // Collect morph target meshes for facial expressions
         if (child.morphTargetInfluences && child.morphTargetDictionary) {
           this.morphMeshes.push(child);
         }
       }
       if (child.isBone) {
-        // Try to map this bone
         this._mapBone(child);
       }
     });
 
-    // Position model at origin, normalize scale
+    // Normalize scale
     const box = new THREE.Box3().setFromObject(this.model);
     const rawHeight = box.max.y - box.min.y;
-
-    // Normalize model to ~1.7 units tall (human height in meters)
-    // This handles models exported in mm, cm, or other scales
     const TARGET_HEIGHT = 1.7;
     if (rawHeight > 10 || rawHeight < 0.1) {
       const s = TARGET_HEIGHT / rawHeight;
       this.model.scale.set(s, s, s);
-      box.setFromObject(this.model); // recompute after scale
+      box.setFromObject(this.model);
     }
 
     const height = box.max.y - box.min.y;
-    // Center horizontally, put feet on floor
     this.model.position.y = -box.min.y;
     this.model.position.x = -(box.max.x + box.min.x) / 2;
     this.model.position.z = -(box.max.z + box.min.z) / 2;
 
-    // Adjust camera — pull back significantly so avatar is small in viewport
-    const camDist = Math.max(height * 4.5, 6.0);
-    this.camera.position.set(0, height * 0.45, camDist);
-    this.camera.lookAt(0, height * 0.4, 0);
+    // Camera: frame upper body for signing visibility
+    const camDist = Math.max(height * 3.0, 4.0);
+    this.camera.position.set(0, height * 0.5, camDist);
+    this.camera.lookAt(0, height * 0.45, 0);
     this.camera.near = camDist * 0.01;
     this.camera.far = camDist * 10;
     this.camera.updateProjectionMatrix();
 
-    // Update orbit controls to focus on model center
     if (this.controls) {
       this.controls.target.set(0, height * 0.45, 0);
       this.controls.minDistance = camDist * 0.3;
@@ -459,39 +629,32 @@ export class HumanoidAvatar {
       }
     });
 
-    // Map finger bones
     this._mapFingerBones('left');
     this._mapFingerBones('right');
-
-    // Save rest pose
     this._saveRestPose();
+    this._initBoneFilters();
 
-    // Set up animation mixer for any embedded animations
     if (gltf.animations && gltf.animations.length > 0) {
       this.mixer = new THREE.AnimationMixer(this.model);
     }
 
     this.loaded = true;
 
-    // Log bone discovery for debugging
+    // Debug logging
     const found = Object.keys(this.bones).filter(k => this.bones[k]);
     const missing = Object.keys(this.bones).filter(k => !this.bones[k]);
     const fingers = Object.keys(this.fingerBones.left).length + Object.keys(this.fingerBones.right).length;
     const morphs = this.morphMeshes.reduce((a, m) =>
       a + Object.keys(m.morphTargetDictionary || {}).length, 0);
     console.log(`[Avatar] Loaded: ${found.length} bones, ${fingers} finger chains, ${morphs} morph targets`);
-    console.log(`[Avatar] Mapped bones: ${found.join(', ')}`);
     if (missing.length) console.warn(`[Avatar] Missing bones: ${missing.join(', ')}`);
 
-    // Log actual skeleton bone names for debugging
     if (this.skeleton) {
       console.log(`[Avatar] Skeleton bones: ${this.skeleton.bones.map(b => b.name).join(', ')}`);
     }
 
-    // Apply idle pose
     this._idle();
 
-    // If playback was queued while loading, start it now
     if (this._pendingPlay) {
       const { landmarks, speed, onFrame, onDone } = this._pendingPlay;
       this._pendingPlay = null;
@@ -501,11 +664,9 @@ export class HumanoidAvatar {
 
   _mapBone(bone) {
     const name = bone.name;
-    // Strip numeric suffixes like _011, _025 (Blender exports)
     const stripped = name.replace(/_\d+$/, '');
     const lower = stripped.toLowerCase();
 
-    // First: try explicit aliases
     for (const [key, aliases] of Object.entries(BONE_ALIASES)) {
       if (this.bones[key]) continue;
       if (aliases.some(a => name === a || name.toLowerCase() === a.toLowerCase()
@@ -515,22 +676,13 @@ export class HumanoidAvatar {
       }
     }
 
-    // Second: Blender-style naming (e.g., shoulder.L, upper_arm.R, forearm.L, hand.R)
     const BLENDER_MAP = {
-      'hips':          'hips',
-      'spine':         'spine',
-      'chest':         'spine1',
-      'chest1':        'spine2',
-      'neck':          'neck',
-      'head':          'head',
-      'shoulder.l':    'leftShoulder',
-      'upper_arm.l':   'leftUpperArm',
-      'forearm.l':     'leftForeArm',
-      'hand.l':        'leftHand',
-      'shoulder.r':    'rightShoulder',
-      'upper_arm.r':   'rightUpperArm',
-      'forearm.r':     'rightForeArm',
-      'hand.r':        'rightHand',
+      'hips': 'hips', 'spine': 'spine', 'chest': 'spine1', 'chest1': 'spine2',
+      'neck': 'neck', 'head': 'head',
+      'shoulder.l': 'leftShoulder', 'upper_arm.l': 'leftUpperArm',
+      'forearm.l': 'leftForeArm', 'hand.l': 'leftHand',
+      'shoulder.r': 'rightShoulder', 'upper_arm.r': 'rightUpperArm',
+      'forearm.r': 'rightForeArm', 'hand.r': 'rightHand',
     };
 
     const mapped = BLENDER_MAP[lower];
@@ -545,46 +697,33 @@ export class HumanoidAvatar {
     const sideChar = side === 'left' ? 'L' : 'R';
     const boneList = this.skeleton.bones;
 
-    // Map our finger names to Blender-style prefixes
     const BLENDER_FINGER = {
-      Thumb:  'thumb',
-      Index:  'f_index',
-      Middle: 'f_middle',
-      Ring:   'f_ring',
-      Pinky:  'f_pinky',
+      Thumb: 'thumb', Index: 'f_index', Middle: 'f_middle',
+      Ring: 'f_ring', Pinky: 'f_pinky',
     };
 
     for (const finger of FINGER_NAMES_MAP) {
       const chain = [];
-
       for (let i = 1; i <= 3; i++) {
         const candidates = [
-          // Mixamo
           `mixamorig${Side}Hand${finger}${i}`,
-          // RPM / generic
           `${Side}Hand${finger}${i}`,
-          // VRM
           `J_Bip_${sideChar}_${finger}${i}`,
-          // Lowercase
           `${side}Hand${finger}${i}`,
-          // With underscore
           `${Side}_Hand_${finger}_${i}`,
-          // Blender: e.g. f_index.01.L, thumb.02.R
           `${BLENDER_FINGER[finger]}.0${i}.${sideChar}`,
         ];
 
-        // Match with or without numeric suffix (_032, _047, etc.)
         const bone = boneList.find(b => {
-          const stripped = b.name.replace(/_\d+$/, '');
+          const s = b.name.replace(/_\d+$/, '');
           return candidates.some(c =>
             b.name === c || b.name.toLowerCase() === c.toLowerCase()
-            || stripped === c || stripped.toLowerCase() === c.toLowerCase()
+            || s === c || s.toLowerCase() === c.toLowerCase()
           );
         });
 
         if (bone) chain.push(bone);
       }
-
       if (chain.length > 0) {
         this.fingerBones[side][finger] = chain;
       }
@@ -592,7 +731,6 @@ export class HumanoidAvatar {
   }
 
   _saveRestPose() {
-    // Save quaternion rest state for all mapped bones
     for (const [key, bone] of Object.entries(this.bones)) {
       if (bone) this._restPose[key] = bone.quaternion.clone();
     }
@@ -605,12 +743,48 @@ export class HumanoidAvatar {
     }
   }
 
-  // ─── Arm IK ───────────────────────────────────────────────
+  _initBoneFilters() {
+    this._boneFilters = {};
+    // Arm bones get tighter filtering (less jitter on big movements)
+    for (const side of ['left', 'right']) {
+      for (const part of ['UpperArm', 'ForeArm', 'Hand']) {
+        this._boneFilters[side + part] = new QuatOneEuroFilter(1.2, 0.01);
+      }
+    }
+    // Finger bones get lighter filtering (preserve fast finger movements)
+    for (const side of ['left', 'right']) {
+      for (const [finger, chain] of Object.entries(this.fingerBones[side])) {
+        chain.forEach((_, i) => {
+          this._boneFilters[`${side}_${finger}_${i}`] = new QuatOneEuroFilter(2.0, 0.015);
+        });
+      }
+    }
+    // Spine/head get smooth filtering
+    for (const k of ['spine', 'spine1', 'spine2', 'neck', 'head']) {
+      this._boneFilters[k] = new QuatOneEuroFilter(0.8, 0.005);
+    }
+  }
+
+  _resetFilters() {
+    for (const f of Object.values(this._boneFilters)) {
+      f.reset();
+    }
+  }
+
+  // Apply temporal filter to a bone's current quaternion
+  _filterBone(key, bone) {
+    const filter = this._boneFilters[key];
+    if (!filter) return;
+    const t = performance.now() / 1000;
+    bone.quaternion.copy(filter.filter(bone.quaternion, t));
+  }
+
+  // ─── Arm IK with pole vector ───────────────────────────────
 
   _lmToWorld(lm) {
     return new THREE.Vector3(
       (0.5 - lm[0]) * 1.6,
-      (0.5 - lm[1]) * 1.6 + 1.0, // offset up to chest height
+      (0.5 - lm[1]) * 1.6 + 1.0,
       -(lm[2] ?? 0) * 0.4
     );
   }
@@ -621,11 +795,9 @@ export class HumanoidAvatar {
     const hand = this.bones[side + 'Hand'];
     if (!upperArm || !foreArm) return;
 
-    // Get upper arm world position (shoulder joint)
     const shoulderWorld = new THREE.Vector3();
     upperArm.getWorldPosition(shoulderWorld);
 
-    // Compute arm segment lengths from rest pose bone distances
     const elbowWorld = new THREE.Vector3();
     foreArm.getWorldPosition(elbowWorld);
     const wristWorld = new THREE.Vector3();
@@ -635,18 +807,16 @@ export class HumanoidAvatar {
     const L1 = shoulderWorld.distanceTo(elbowWorld) || 0.3;
     const L2 = elbowWorld.distanceTo(wristWorld) || 0.25;
 
-    // Direction from shoulder to target
     const toTarget = new THREE.Vector3().subVectors(target, shoulderWorld);
     const d = Math.min(toTarget.length(), L1 + L2 - 0.01);
-
     if (d < 0.01) return;
 
-    // Elbow angle (law of cosines)
+    // Law of cosines for elbow angle
     let cosElbow = (L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2);
     cosElbow = Math.max(-1, Math.min(1, cosElbow));
     const elbowAngle = Math.PI - Math.acos(cosElbow);
 
-    // Point upper arm toward target in its local space
+    // Parent space transform
     const parentWorld = new THREE.Quaternion();
     if (upperArm.parent) upperArm.parent.getWorldQuaternion(parentWorld);
     const parentInv = parentWorld.clone().invert();
@@ -654,29 +824,48 @@ export class HumanoidAvatar {
     const dir = toTarget.normalize();
     const localDir = dir.clone().applyQuaternion(parentInv);
 
-    // Determine rest direction of the arm
-    const restDir = new THREE.Vector3(0, -1, 0); // Most rigs: arm points down in T-pose
-    // For some rigs the arm might point sideways - detect from bone position
+    // Determine rest direction of arm
+    const restDir = new THREE.Vector3(0, -1, 0);
     if (this.bones[side + 'Shoulder']) {
-      const shoulderLocal = new THREE.Vector3();
-      upperArm.getWorldPosition(shoulderLocal);
-      const elbowLocal = new THREE.Vector3();
-      foreArm.getWorldPosition(elbowLocal);
-      const armDir = elbowLocal.sub(shoulderLocal).normalize();
+      const sPos = new THREE.Vector3();
+      upperArm.getWorldPosition(sPos);
+      const ePos = new THREE.Vector3();
+      foreArm.getWorldPosition(ePos);
+      const armDir = ePos.sub(sPos).normalize();
       const localArmDir = armDir.applyQuaternion(parentInv);
       if (Math.abs(localArmDir.x) > Math.abs(localArmDir.y)) {
-        // Arm extends sideways (T-pose)
         restDir.set(side === 'left' ? -1 : 1, 0, 0);
       }
     }
 
-    const q = new THREE.Quaternion().setFromUnitVectors(restDir, localDir);
-    upperArm.quaternion.copy(q);
+    // Pole vector: bias elbow slightly down and back for natural pose
+    const poleOffset = new THREE.Vector3(
+      side === 'left' ? -0.15 : 0.15,
+      -0.3,
+      -0.2
+    ).applyQuaternion(parentInv);
 
-    // Apply elbow bend
+    const q = new THREE.Quaternion().setFromUnitVectors(restDir, localDir);
+
+    // Apply pole vector twist
+    const forward = localDir.clone();
+    const poleDir = poleOffset.clone().normalize();
+    const right = new THREE.Vector3().crossVectors(forward, poleDir).normalize();
+    const polePlane = new THREE.Vector3().crossVectors(right, forward).normalize();
+    // Subtle twist toward pole vector
+    const twistAngle = Math.atan2(polePlane.z, polePlane.y) * 0.15;
+    const twistQ = new THREE.Quaternion().setFromAxisAngle(forward, twistAngle);
+
+    upperArm.quaternion.copy(q.multiply(twistQ));
+
+    // Apply temporal filtering to upper arm
+    this._filterBone(side + 'UpperArm', upperArm);
+
+    // Elbow bend
     if (foreArm) {
       foreArm.quaternion.copy(this._restPose[side + 'ForeArm'] || new THREE.Quaternion());
       foreArm.rotateX(elbowAngle);
+      this._filterBone(side + 'ForeArm', foreArm);
     }
   }
 
@@ -697,7 +886,6 @@ export class HumanoidAvatar {
         const curr = pts[j];
         const next = j < pts.length - 1 ? pts[j + 1] : pts[j];
 
-        // Compute flexion angle between segments
         const v1 = [curr[0] - prev[0], curr[1] - prev[1], (curr[2] ?? 0) - (prev[2] ?? 0)];
         const v2 = [next[0] - curr[0], next[1] - curr[1], (next[2] ?? 0) - (curr[2] ?? 0)];
         const dot = v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
@@ -706,21 +894,21 @@ export class HumanoidAvatar {
         let angle = Math.acos(Math.max(-1, Math.min(1, dot / (m1 * m2))));
         if (v1[0] * v2[1] - v1[1] * v2[0] < 0) angle = -angle;
 
-        // Layer C: enforce θ_DIP = (2/3) × θ_PIP for non-thumb
+        // DIP = 2/3 × PIP coupling
         if (finger !== 'Thumb' && j === 2 && chain.length >= 3) {
-          // Use PIP angle from previous joint
           const pipBone = chain[1];
           angle = pipBone.rotation.x * WBC.DIP_PIP;
         }
 
-        // Clamp
         const maxFlex = finger === 'Thumb' ? Math.PI * 0.5 : Math.PI * 0.55;
         angle = Math.max(-0.2, Math.min(maxFlex, angle));
 
-        // Apply to bone (reset to rest first, then rotate)
         const restQ = this._restPose[`${side}_${finger}_${j}`];
         if (restQ) chain[j].quaternion.copy(restQ);
         chain[j].rotateX(angle);
+
+        // Temporal filter
+        this._filterBone(`${side}_${finger}_${j}`, chain[j]);
       }
 
       // Thumb abduction
@@ -752,38 +940,61 @@ export class HumanoidAvatar {
     this._pitch += (tp - this._pitch) * WBC.SMOOTH;
     if (!n) { this._yaw *= WBC.RETURN; this._pitch *= WBC.RETURN; }
 
-    // Apply relative to rest pose
-    const restQ = this._restPose[spine === this.bones.spine1 ? 'spine1' : 'spine'];
+    const key = spine === this.bones.spine1 ? 'spine1' : 'spine';
+    const restQ = this._restPose[key];
     if (restQ) spine.quaternion.copy(restQ);
     spine.rotateY(this._yaw);
     spine.rotateX(this._pitch);
+    this._filterBone(key, spine);
   }
 
-  // ─── FACS (morph target driver) ───────────────────────────
+  // ─── Enhanced FACS (morph target driver) ───────────────────
 
   _updateFace(faceData) {
     this.facs.update(faceData);
 
+    // Head rotation from FACS
+    const headBone = this.bones.head;
+    if (headBone && (this.facs.au.headYaw || this.facs.au.headPitch || this.facs.au.headRoll)) {
+      const restQ = this._restPose.head;
+      if (restQ) headBone.quaternion.copy(restQ);
+      headBone.rotateY(this.facs.au.headYaw * 0.5);
+      headBone.rotateX(this.facs.au.headPitch * 0.3);
+      headBone.rotateZ(this.facs.au.headRoll * 0.2);
+      this._filterBone('head', headBone);
+    }
+
     if (this.morphMeshes.length === 0) return;
 
-    // Map AUs to common morph target names
-    // RPM / ARKit blendshape names:
+    const au = this.facs.au;
     const morphMap = {
-      // AU1/2 brow raise
-      'browInnerUp':      (this.facs.au[1] * 0.6 + this.facs.au[2] * 0.4),
-      'browOuterUpLeft':  this.facs.au[2],
-      'browOuterUpRight': this.facs.au[2],
-      // AU4 brow lower
-      'browDownLeft':     this.facs.au[4],
-      'browDownRight':    this.facs.au[4],
-      // AU25/26 mouth
-      'jawOpen':          this.facs.au[26] * 0.8 + this.facs.au[25] * 0.3,
-      'mouthOpen':        this.facs.au[25] * 0.5 + this.facs.au[26] * 0.5,
-      // AU20 lip stretch
-      'mouthSmileLeft':   this.facs.au[20] * 0.5,
-      'mouthSmileRight':  this.facs.au[20] * 0.5,
-      'mouthStretchLeft': this.facs.au[20] * 0.3,
-      'mouthStretchRight':this.facs.au[20] * 0.3,
+      // Brows
+      'browInnerUp':      (au[1] * 0.6 + au[2] * 0.4),
+      'browOuterUpLeft':  au[2],
+      'browOuterUpRight': au[2],
+      'browDownLeft':     au[4],
+      'browDownRight':    au[4],
+      // Eyes
+      'eyeWideLeft':      au[5],
+      'eyeWideRight':     au[5],
+      'eyeSquintLeft':    au[6],
+      'eyeSquintRight':   au[6],
+      // Nose
+      'noseSneerLeft':    au[9] * 0.5,
+      'noseSneerRight':   au[9] * 0.5,
+      // Mouth
+      'jawOpen':          au[26] * 0.8 + au[25] * 0.3,
+      'mouthOpen':        au[25] * 0.5 + au[26] * 0.5,
+      'mouthSmileLeft':   au[12] * 0.6,
+      'mouthSmileRight':  au[12] * 0.6,
+      'mouthFrownLeft':   au[15] * 0.5,
+      'mouthFrownRight':  au[15] * 0.5,
+      'mouthStretchLeft': au[20] * 0.3,
+      'mouthStretchRight':au[20] * 0.3,
+      'mouthUpperUpLeft': au[10] * 0.4,
+      'mouthUpperUpRight':au[10] * 0.4,
+      // Lip pucker (used in some sign phonemes)
+      'mouthPucker':      Math.max(0, 0.5 - au[20]) * au[25] * 0.5,
     };
 
     for (const mesh of this.morphMeshes) {
@@ -803,9 +1014,9 @@ export class HumanoidAvatar {
     if (!this.loaded) return;
     if (!frame) { this._idle(); return; }
 
-    let lh = null, rh = null, fd = null;
+    let lh = null, rh = null, fd = null, pose = null;
     if (frame.leftHand || frame.rightHand) {
-      lh = frame.leftHand; rh = frame.rightHand; fd = frame.face;
+      lh = frame.leftHand; rh = frame.rightHand; fd = frame.face; pose = frame.pose;
     } else if (Array.isArray(frame) && frame.length >= 21) {
       rh = frame;
     }
@@ -820,13 +1031,14 @@ export class HumanoidAvatar {
       this._fingerPose(lh, 'left');
     } else this._armRest('left');
 
+    // Update head orientation from pose landmarks
+    if (pose) this.facs.updateHead(pose);
     this._updateFace(fd);
     this._wbc(lh ? lh[0] : null, rh ? rh[0] : null);
   }
 
   _idle() {
     if (!this.loaded) return;
-    // Return all bones to rest pose
     for (const [key, bone] of Object.entries(this.bones)) {
       if (bone && this._restPose[key]) {
         bone.quaternion.slerp(this._restPose[key], 0.1);
@@ -855,7 +1067,6 @@ export class HumanoidAvatar {
       const rest = this._restPose[key];
       if (bone && rest) bone.quaternion.slerp(rest, 0.15);
     }
-    // Return fingers to rest
     for (const [finger, chain] of Object.entries(this.fingerBones[side])) {
       chain.forEach((bone, i) => {
         const rest = this._restPose[`${side}_${finger}_${i}`];
@@ -882,27 +1093,25 @@ export class HumanoidAvatar {
       leftHand:  this._mjHand(a.leftHand, b.leftHand, t),
       rightHand: this._mjHand(a.rightHand, b.rightHand, t),
       face:      this._mjHand(a.face, b.face, t),
+      pose:      this._mjHand(a.pose, b.pose, t),
     };
   }
 
   _toFrame(fr) {
     if (!fr) return null;
-    // Holistic format: {leftHand, rightHand, face}
     if (fr.leftHand !== undefined || fr.rightHand !== undefined)
-      return { leftHand: fr.leftHand || null, rightHand: fr.rightHand || null, face: fr.face || null };
+      return { leftHand: fr.leftHand || null, rightHand: fr.rightHand || null, face: fr.face || null, pose: fr.pose || null };
     if (!Array.isArray(fr)) return null;
 
-    // Direct 21 landmarks: [[x,y,z], ...] where fr[0] is a coordinate
     if (fr.length >= 21 && Array.isArray(fr[0]) && typeof fr[0][0] === 'number') {
-      return { leftHand: null, rightHand: fr, face: null };
+      return { leftHand: null, rightHand: fr, face: null, pose: null };
     }
 
-    // Wrapped format from old DB: [[[x,y,z],...21]] or [[[x,y,z],...21], [[x,y,z],...21]]
     if (fr.length <= 2 && Array.isArray(fr[0]) && fr[0].length >= 21
         && Array.isArray(fr[0][0]) && fr[0][0].length >= 2) {
       const rightHand = fr[0];
       const leftHand = fr.length === 2 && Array.isArray(fr[1]) && fr[1].length >= 21 ? fr[1] : null;
-      return { rightHand, leftHand, face: null };
+      return { rightHand, leftHand, face: null, pose: null };
     }
 
     return null;
@@ -911,7 +1120,6 @@ export class HumanoidAvatar {
   // ─── Playback API ─────────────────────────────────────────
 
   playSequence(landmarks, speed = 1, onFrame = null, onDone = null) {
-    // Queue playback if model hasn't loaded yet
     if (!this.loaded) {
       console.log('[Avatar] Model still loading — queuing playback');
       this._pendingPlay = { landmarks, speed, onFrame, onDone };
@@ -931,6 +1139,7 @@ export class HumanoidAvatar {
     this._onFrame = onFrame; this._onDone = onDone;
     this.lastT = performance.now();
     this.facs.reset();
+    this._resetFilters();
 
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this._tick();
@@ -971,6 +1180,7 @@ export class HumanoidAvatar {
     this.paused = false; this.playing = true;
     this.lastT = performance.now();
     this.facs.reset();
+    this._resetFilters();
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this._tick();
   }
@@ -982,7 +1192,6 @@ export class HumanoidAvatar {
   setCharacter(id) {
     if (!AVATARS[id] || id === this.charId) return;
     this.charId = id;
-    // Remove current model
     if (this.model) {
       this.scene.remove(this.model);
       this.model = null;
@@ -991,10 +1200,10 @@ export class HumanoidAvatar {
     this.fingerBones = { left: {}, right: {} };
     this.morphMeshes = [];
     this._restPose = {};
+    this._boneFilters = {};
     this.loaded = false;
     this.skeleton = null;
 
-    // Show loading indicator
     this.loadingEl = document.createElement('div');
     this.loadingEl.style.cssText = `
       position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);

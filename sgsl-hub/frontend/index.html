@@ -192,6 +192,18 @@
             <h2>Text to Sign</h2>
             <p class="card-desc">Search the library and watch signs demonstrated by an animated avatar.</p>
           </div>
+          <!-- Sentence input for text-to-sign translation -->
+          <div class="sentence-input-area">
+            <div class="input-row">
+              <input type="text" id="tts-sentence" placeholder="Type a sentence to translate to SgSL..." autocomplete="off">
+              <button class="btn btn-primary" id="tts-translate-btn">Translate</button>
+            </div>
+            <div class="gloss-display hidden" id="gloss-display">
+              <span class="gloss-label">SgSL Gloss:</span>
+              <span class="gloss-tokens" id="gloss-tokens"></span>
+            </div>
+          </div>
+
           <div class="tts-layout">
             <div class="tts-sidebar">
               <div class="input-row">
@@ -202,13 +214,9 @@
               </div>
             </div>
             <div class="tts-viewer">
-              <!-- View mode toggle + Avatar selector -->
+              <!-- Avatar character selector -->
               <div class="viewer-toolbar">
-                <div class="view-toggle">
-                  <button class="view-toggle-btn active" id="view-avatar-btn" title="Avatar View">Avatar</button>
-                  <button class="view-toggle-btn" id="view-3d-btn" title="3D Wireframe">3D</button>
-                </div>
-                <div class="avatar-selector hidden" id="avatar-selector">
+                <div class="avatar-selector" id="avatar-selector">
                   <button class="avatar-pick active" data-avatar="tom" title="Tom">
                     <svg viewBox="0 0 32 32" width="26" height="26"><circle cx="16" cy="12" r="8" fill="#F0C2A0"/><rect x="10" y="20" width="12" height="10" rx="4" fill="#4A4A6A"/><path d="M8,9 Q9,3 16,2 Q23,3 24,9 Q24,6 20,4 Q16,2.5 12,4 Q8,6 8,9" fill="#1A1A2E"/></svg>
                     <span>Tom</span>
@@ -220,28 +228,17 @@
                 </div>
               </div>
 
-              <!-- Avatar container (default view) -->
+              <!-- Avatar container (sole viewer) -->
               <div id="avatar-container" class="viewer-3d">
                 <div class="empty-state" id="avatar-empty">
                   <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
                     <circle cx="24" cy="16" r="10"/>
                     <path d="M10 44 Q10 30 24 28 Q38 30 38 44"/>
                   </svg>
-                  <p>Select a sign to view</p>
+                  <p>Select a sign or type a sentence</p>
                 </div>
               </div>
 
-              <!-- 3D wireframe container (hidden by default) -->
-              <div id="threejs-container" class="viewer-3d hidden">
-                <div class="empty-state" id="tts-empty">
-                  <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
-                    <path d="M17 36 V20 Q17 12 22 12 Q27 12 27 20 V36" stroke-linecap="round"/>
-                    <path d="M27 36 V16 Q27 10 32 10 Q37 10 37 16 V28" stroke-linecap="round"/>
-                    <path d="M11 32 V24 Q11 18 17 18" stroke-linecap="round"/>
-                  </svg>
-                  <p>Select a sign to view</p>
-                </div>
-              </div>
               <div class="playback-bar hidden" id="playback-bar">
                 <div class="progress-track">
                   <div class="progress-fill" id="tts-progress"></div>

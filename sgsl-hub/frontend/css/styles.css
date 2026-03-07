@@ -1185,3 +1185,67 @@ input::placeholder { color: var(--text-3); }
   .viewer-toolbar { flex-direction: column; align-items: flex-start; }
   .avatar-selector { width: 100%; justify-content: flex-end; }
 }
+
+
+/* ============================================================
+   Sentence Input & Gloss Display
+   ============================================================ */
+
+.sentence-input-area {
+  margin-bottom: 1rem;
+}
+
+.sentence-input-area .input-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.sentence-input-area .input-row input {
+  flex: 1;
+}
+
+.gloss-display {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--primary-bg);
+  border-radius: var(--r);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.gloss-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--primary-dark);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.gloss-tokens {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.gloss-token {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  background: var(--primary);
+  color: white;
+  border-radius: var(--r-full);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.gloss-token.nmm-question {
+  background: #F59E0B;
+  color: #1B1F2E;
+}
+
+.gloss-token.nmm-negation {
+  background: var(--danger);
+}

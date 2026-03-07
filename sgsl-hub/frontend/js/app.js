@@ -1,5 +1,5 @@
 /* ============================================================
-   SgSL Hub v2 — App Shell
+   SgSL Hub — App Shell
    ============================================================
    Tab navigation, authentication, status helpers, toast
    notifications, and lazy module initialization.
@@ -93,7 +93,6 @@ async function handleLogin() {
 function initAuth() {
   updateAuthUI();
 
-  // Delegate click handlers for dynamically created auth buttons
   document.addEventListener('click', (e) => {
     if (e.target.id === 'signin-btn' || e.target.id === 'auth-gate-signin') {
       openLoginModal();
@@ -105,7 +104,6 @@ function initAuth() {
     }
   });
 
-  // Login modal close
   const modal = document.getElementById('login-modal');
   document.getElementById('modal-close-btn')?.addEventListener('click', () => {
     modal.classList.add('hidden');
@@ -114,7 +112,6 @@ function initAuth() {
     if (e.target === modal) modal.classList.add('hidden');
   });
 
-  // Login form submit
   document.getElementById('login-submit-btn')?.addEventListener('click', handleLogin);
   document.getElementById('login-email')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') handleLogin();
@@ -132,20 +129,17 @@ const tabMap = {
 const inited = {};
 
 function activateTab(tabId) {
-  // Update tab buttons
   document.querySelectorAll('.tab').forEach(t => {
     const isActive = t.id === tabId;
     t.classList.toggle('active', isActive);
     t.setAttribute('aria-selected', isActive);
   });
 
-  // Update sections
   const sectionId = tabMap[tabId];
   document.querySelectorAll('.section').forEach(s => {
     s.classList.toggle('active', s.id === sectionId);
   });
 
-  // Lazy init modules
   if (sectionId === 'contribute' && !inited.contribute) {
     inited.contribute = true;
     initContribute();
@@ -153,7 +147,7 @@ function activateTab(tabId) {
   if (sectionId === 'text-to-sign' && !inited.viewer) {
     inited.viewer = true;
     initViewer();
-    initViewToggle();
+    initAvatarSelector();
   }
   if (sectionId === 'sign-to-text' && !inited.recognize) {
     inited.recognize = true;
@@ -165,34 +159,7 @@ function activateTab(tabId) {
   }
 }
 
-// --- Helpers ---
-function esc(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-// --- View toggle (Avatar vs 3D) ---
-export let viewMode = 'avatar'; // 'avatar' or '3d'
-
-function initViewToggle() {
-  const avatarBtn = document.getElementById('view-avatar-btn');
-  const threeDBtn = document.getElementById('view-3d-btn');
-  const avatarContainer = document.getElementById('avatar-container');
-  const threejsContainer = document.getElementById('threejs-container');
-  const avatarSelector = document.getElementById('avatar-selector');
-
-  function setView(mode) {
-    viewMode = mode;
-    avatarBtn.classList.toggle('active', mode === 'avatar');
-    threeDBtn.classList.toggle('active', mode === '3d');
-    avatarContainer.classList.toggle('hidden', mode !== 'avatar');
-    threejsContainer.classList.toggle('hidden', mode !== '3d');
-    avatarSelector.classList.toggle('hidden', mode !== 'avatar');
-  }
-
-  avatarBtn.addEventListener('click', () => setView('avatar'));
-  threeDBtn.addEventListener('click', () => setView('3d'));
-
-  // Avatar character selector
+function initAvatarSelector() {
   document.querySelectorAll('.avatar-pick').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.avatar-pick').forEach(b => b.classList.remove('active'));
@@ -200,8 +167,11 @@ function initViewToggle() {
       setHumanoidCharacter(btn.dataset.avatar);
     });
   });
+}
 
-  setView('avatar');
+// --- Helpers ---
+function esc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // --- Init ---
@@ -212,6 +182,5 @@ document.addEventListener('DOMContentLoaded', () => {
     tab.addEventListener('click', () => activateTab(tab.id));
   });
 
-  // Init first tab
   activateTab('tab-contribute');
 });
