@@ -254,6 +254,12 @@ export function initViewer() {
     inited = true;
     loadLibrary();
 
+    // Auto-refresh library when new signs are contributed
+    window.addEventListener('sgsl-library-changed', () => {
+      console.log('[Viewer] Library changed, refreshing...');
+      loadLibrary();
+    });
+
     document.getElementById('tts-search').addEventListener('keydown', e => {
       if (e.key === 'Enter') {
         const v = e.target.value.trim();

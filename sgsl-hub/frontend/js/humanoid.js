@@ -333,6 +333,7 @@ export class HumanoidAvatar {
     // Loading state
     this.loaded = false;
     this.loadingEl = null;
+    this._xFlip = 1;  // +1 or -1, set after model orientation detection
 
     // Animation
     this.seq = [];
@@ -678,6 +679,16 @@ export class HumanoidAvatar {
     this._cacheArmRestDirs();
     this._initBoneFilters();
 
+    // Determine X-flip: check which side the avatar's right shoulder is on
+    // MediaPipe (0.5-x) maps user's right hand (low x) to +X world space
+    // If avatar's right shoulder is at -X, we need to negate to match
+    if (this.bones.rightShoulder) {
+      const rsWorld = new THREE.Vector3();
+      this.bones.rightShoulder.getWorldPosition(rsWorld);
+      this._xFlip = rsWorld.x < 0 ? -1 : 1;
+      console.log(`[Avatar] Right shoulder at x=${rsWorld.x.toFixed(3)}, xFlip=${this._xFlip}`);
+    }
+
     if (gltf.animations && gltf.animations.length > 0) {
       this.mixer = new THREE.AnimationMixer(this.model);
     }
@@ -890,8 +901,10 @@ export class HumanoidAvatar {
   // ─── Arm IK with pole vector ───────────────────────────────
 
   _lmToWorld(lm) {
+    // MediaPipe x: 0=left of image, 1=right of image (selfie/mirrored)
+    // (0.5 - x) centers it, then _xFlip aligns with avatar's actual shoulder side
     return new THREE.Vector3(
-      (0.5 - lm[0]) * 1.6,
+      (0.5 - lm[0]) * 1.6 * this._xFlip,
       (0.5 - lm[1]) * 1.6 + 1.0,
       -(lm[2] ?? 0) * 0.4
     );
