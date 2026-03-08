@@ -25,14 +25,30 @@ export async function fetchSign(label) {
 }
 
 export async function contribute(label, landmarks, contributor = null) {
-  const res = await fetch(`${BASE}/api/contribute`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ label, landmarks, contributor }),
-  });
-  const data = await safeJSON(res);
-  if (!res.ok) throw new Error(data.detail || 'Contribution failed');
-  return data;
+  const body = JSON.stringify({ label, landmarks, contributor });
+  // Retry up to 2 times on server errors (DB may need to fall back to SQLite)
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(`${BASE}/api/contribute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      const data = await safeJSON(res);
+      if (res.ok) return data;
+      if (res.status >= 500 && attempt < 3) {
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+        continue;
+      }
+      throw new Error(data.detail || 'Contribution failed');
+    } catch (err) {
+      if (attempt < 3 && (err.name === 'TypeError' || err.message.includes('fetch'))) {
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 export async function recognize(landmarks) {

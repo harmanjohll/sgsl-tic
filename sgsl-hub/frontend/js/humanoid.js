@@ -603,9 +603,24 @@ export class HumanoidAvatar {
       hipsBone.getWorldPosition(hipsPos);
       headBone.getWorldPosition(headPos);
       if (hipsPos.y > headPos.y) {
-        // Model is upside down — flip 180° around Z axis
-        console.log('[Avatar] Detected upside-down model, applying 180° Z rotation');
-        this.model.rotation.z = Math.PI;
+        // Model is upside down — flip 180° around X axis
+        // X rotation flips Y (fixes upside-down) without mirroring left/right
+        console.log('[Avatar] Detected upside-down model, applying 180° X rotation');
+        this.model.rotation.x = Math.PI;
+        this.model.updateMatrixWorld(true);
+      }
+    }
+
+    // Detect left/right swap: check if left shoulder is on the right side
+    if (this.bones.leftShoulder && this.bones.rightShoulder) {
+      const lsPos = new THREE.Vector3();
+      const rsPos = new THREE.Vector3();
+      this.bones.leftShoulder.getWorldPosition(lsPos);
+      this.bones.rightShoulder.getWorldPosition(rsPos);
+      if (lsPos.x < rsPos.x) {
+        // Left shoulder is to the right of right shoulder — model faces away or is mirrored
+        console.log('[Avatar] Detected mirrored model, applying 180° Y rotation');
+        this.model.rotation.y = Math.PI;
         this.model.updateMatrixWorld(true);
       }
     }
@@ -817,6 +832,10 @@ export class HumanoidAvatar {
   _cacheArmRestDirs() {
     this._armRestDir = {};
     this._armLengths = {};
+
+    // Ensure world matrices are up to date after model transforms
+    this.model.updateMatrixWorld(true);
+
     for (const side of ['left', 'right']) {
       const upperArm = this.bones[side + 'UpperArm'];
       const foreArm = this.bones[side + 'ForeArm'];
