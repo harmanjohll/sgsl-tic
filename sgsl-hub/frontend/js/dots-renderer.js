@@ -128,10 +128,11 @@ export class DotsRenderer {
     this.loaded = true;
 
     // Stabilization filters (21 landmarks per hand, face subset)
+    // Lower minCutoff = more smoothing; lower beta = less speed adaptation (smoother)
     this._filters = {
-      leftHand:  new LandmarkFilter(21, 3.0, 0.05),
-      rightHand: new LandmarkFilter(21, 3.0, 0.05),
-      face:      new LandmarkFilter(50, 2.0, 0.03),
+      leftHand:  new LandmarkFilter(21, 0.8, 0.01),
+      rightHand: new LandmarkFilter(21, 0.8, 0.01),
+      face:      new LandmarkFilter(50, 0.5, 0.005),
     };
 
     // Resize observer
@@ -374,6 +375,7 @@ export class DotsRenderer {
 
   // No-ops for API compatibility
   setCharacter() {}
+  setZoom() {}
   getCharacters() { return []; }
 
   destroy() {

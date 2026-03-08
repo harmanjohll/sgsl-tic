@@ -591,9 +591,27 @@ export class HumanoidAvatar {
     });
 
     // Normalize scale — always scale to target height for consistent framing
+    const TARGET_HEIGHT = 1.7;
+
+    // Detect and fix upside-down model: check if hips bone is above head bone
+    this.model.updateMatrixWorld(true);
+    const hipsBone = this.bones.hips;
+    const headBone = this.bones.head;
+    if (hipsBone && headBone) {
+      const hipsPos = new THREE.Vector3();
+      const headPos = new THREE.Vector3();
+      hipsBone.getWorldPosition(hipsPos);
+      headBone.getWorldPosition(headPos);
+      if (hipsPos.y > headPos.y) {
+        // Model is upside down — flip 180° around Z axis
+        console.log('[Avatar] Detected upside-down model, applying 180° Z rotation');
+        this.model.rotation.z = Math.PI;
+        this.model.updateMatrixWorld(true);
+      }
+    }
+
     const box = new THREE.Box3().setFromObject(this.model);
     const rawHeight = box.max.y - box.min.y;
-    const TARGET_HEIGHT = 1.7;
     if (rawHeight > 0.01) {
       const s = TARGET_HEIGHT / rawHeight;
       this.model.scale.set(s, s, s);
@@ -607,9 +625,9 @@ export class HumanoidAvatar {
     this.model.position.z = -(box.max.z + box.min.z) / 2;
 
     // Camera: frame upper body for signing visibility
-    // Model is normalized to 1.7m. Show head + torso + signing space.
-    const camY = height * 0.55;       // chest/shoulder level
-    const camDist = height * 14.0;    // far enough to see full body at small apparent size
+    const camY = height * 0.55;
+    const camDist = height * 3.5;
+    this._baseCamDist = camDist;
     this.camera.position.set(0, camY, camDist);
     this.camera.lookAt(0, camY, 0);
     this.camera.near = 0.01;
@@ -618,8 +636,8 @@ export class HumanoidAvatar {
 
     if (this.controls) {
       this.controls.target.set(0, camY, 0);
-      this.controls.minDistance = 1.0;
-      this.controls.maxDistance = 10.0;
+      this.controls.minDistance = 0.5;
+      this.controls.maxDistance = 50;
       this.controls.update();
     }
 
@@ -1289,6 +1307,16 @@ export class HumanoidAvatar {
   setSpeed(s) { this.speed = s; }
   isPlaying() { return this.playing && !this.paused; }
   getFrameInfo() { return { current: this.fi, total: this.seq.length }; }
+
+  setZoom(pct) {
+    // pct: 10=very zoomed out, 100=default, 200=very zoomed in
+    if (!this.controls) return;
+    // Scale camera distance inversely with percentage
+    const base = this._baseCamDist || 6;
+    const dist = base * (100 / pct);
+    this.camera.position.setLength(dist);
+    this.controls.update();
+  }
 
   setCharacter(id) {
     if (!AVATARS[id] || id === this.charId) return;
