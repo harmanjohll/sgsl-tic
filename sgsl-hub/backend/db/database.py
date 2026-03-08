@@ -18,12 +18,18 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 _USE_PG = bool(DATABASE_URL)
+_PG_AVAILABLE = _USE_PG  # Track whether PG is actually reachable
 
 if _USE_PG:
-    import psycopg
-else:
-    import sqlite3
-    _SQLITE_PATH = str(Path(__file__).parent / "sgsl.db")
+    try:
+        import psycopg
+    except ImportError:
+        print("[DB] psycopg not installed — falling back to SQLite")
+        _USE_PG = False
+        _PG_AVAILABLE = False
+
+import sqlite3
+_SQLITE_PATH = str(Path(__file__).parent / "sgsl.db")
 
 
 # --- IPv4 fix for Render + Supabase ---
@@ -67,23 +73,27 @@ def _resolve_ipv4(hostname):
 # --- Connection helpers ---
 
 def _conn(retries=3):
+    global _USE_PG, _PG_AVAILABLE
     if _USE_PG:
         host = _extract_pg_host(DATABASE_URL)
         ipv4 = _resolve_ipv4(host) if host else None
         last_err = None
         for attempt in range(1, retries + 1):
             try:
-                # Longer timeout on first attempt (DB may be waking from sleep)
-                timeout = 30 if attempt == 1 else 15
+                # Shorter timeouts to fail fast: 10s first, then 5s
+                timeout = 10 if attempt == 1 else 5
                 if ipv4:
                     return psycopg.connect(DATABASE_URL, hostaddr=ipv4, connect_timeout=timeout)
                 return psycopg.connect(DATABASE_URL, connect_timeout=timeout)
             except Exception as e:
                 last_err = e
-                wait = 2 ** attempt
+                wait = min(2 ** attempt, 4)
                 print(f"[DB] Connection attempt {attempt}/{retries} failed: {e} — retrying in {wait}s")
                 time.sleep(wait)
-        raise last_err
+        # PostgreSQL unreachable — fall back to SQLite for this session
+        print(f"[DB] PostgreSQL unreachable after {retries} attempts, falling back to SQLite")
+        _USE_PG = False
+        _init_sqlite()
     conn = sqlite3.connect(_SQLITE_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -127,9 +137,37 @@ def _json_out(val):
 
 # --- Schema ---
 
+def _init_sqlite():
+    """Ensure SQLite schema exists (called on fallback from PG)."""
+    try:
+        conn = sqlite3.connect(_SQLITE_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS signs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL,
+                landmarks TEXT NOT NULL,
+                features TEXT,
+                contributor TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_signs_label ON signs(label);
+        """)
+        columns = [row["name"] for row in conn.execute("PRAGMA table_info(signs)").fetchall()]
+        if "status" not in columns:
+            conn.execute("ALTER TABLE signs ADD COLUMN status TEXT DEFAULT 'pending'")
+        if "verified_by" not in columns:
+            conn.execute("ALTER TABLE signs ADD COLUMN verified_by TEXT")
+        conn.commit()
+        conn.close()
+        print("[DB] SQLite fallback initialized")
+    except Exception as e:
+        print(f"[DB] SQLite init error: {e}")
+
+
 def init_db():
     try:
-        conn = _conn()
+        conn = _conn(retries=2)
     except Exception as e:
         print(f"[DB] WARNING: Could not connect to database: {e}")
         print(f"[DB] _USE_PG={_USE_PG}, DATABASE_URL set={bool(DATABASE_URL)}")
