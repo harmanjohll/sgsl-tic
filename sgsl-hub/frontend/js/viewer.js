@@ -10,9 +10,13 @@ import { fetchSigns, fetchSign, deleteSign } from './api.js';
 import { setStatus, toast } from './app.js';
 import { isLoggedIn } from './auth.js';
 import { HumanoidAvatar } from './humanoid.js';
+import { DotsRenderer } from './dots-renderer.js';
 import { parseSentence } from './gloss.js';
 
 let humanoid = null;
+let dotsRenderer = null;
+let activeRenderer = null; // points to whichever is active
+let activeMode = 'tom'; // 'tom' or 'dots'
 let inited = false;
 let _signs = [];
 let _searchBound = false;
@@ -68,9 +72,9 @@ async function playLabel(label) {
     if (avatarEmpty) avatarEmpty.classList.add('hidden');
     if (bar) bar.classList.remove('hidden');
 
-    if (humanoid) {
-      humanoid.setSpeed(speed);
-      humanoid.playSequence(data.landmarks, speed, (fi, total) => {
+    if (activeRenderer) {
+      activeRenderer.setSpeed(speed);
+      activeRenderer.playSequence(data.landmarks, speed, (fi, total) => {
         if (prog) prog.style.width = `${(fi / total) * 100}%`;
         const fiEl = document.getElementById('frame-info');
         if (fiEl) fiEl.textContent = `${fi} / ${total}`;
@@ -147,9 +151,9 @@ async function playSentence(glossTokens) {
     setStatus(statusEl, `Playing sentence: ${signSequences.map(s => s.sign).join(' → ')} (${combined.length} frames)`, 'info');
   }
 
-  if (humanoid) {
-    humanoid.setSpeed(speed);
-    humanoid.playSequence(combined, speed, (fi, total) => {
+  if (activeRenderer) {
+    activeRenderer.setSpeed(speed);
+    activeRenderer.playSequence(combined, speed, (fi, total) => {
       if (prog) prog.style.width = `${(fi / total) * 100}%`;
       const fiEl = document.getElementById('frame-info');
       if (fiEl) fiEl.textContent = `${fi} / ${total}`;
@@ -295,13 +299,14 @@ export function initViewer() {
   // Initialize humanoid 3D avatar
   if (!humanoid) {
     humanoid = new HumanoidAvatar(document.getElementById('avatar-container'));
+    activeRenderer = humanoid;
   }
 
   setStatus(document.getElementById('tts-status'), 'Select a sign or type a sentence.', 'info');
 
   document.getElementById('replay-btn')?.addEventListener('click', () => {
-    if (humanoid) {
-      humanoid.replay();
+    if (activeRenderer) {
+      activeRenderer.replay();
       document.getElementById('pause-btn').textContent = 'Pause';
       const prog = document.getElementById('tts-progress');
       if (prog) prog.style.width = '0%';
@@ -309,8 +314,8 @@ export function initViewer() {
   });
 
   document.getElementById('pause-btn')?.addEventListener('click', () => {
-    if (humanoid) {
-      const paused = humanoid.togglePause();
+    if (activeRenderer) {
+      const paused = activeRenderer.togglePause();
       document.getElementById('pause-btn').textContent = paused ? 'Resume' : 'Pause';
     }
   });
@@ -324,7 +329,38 @@ export function initViewer() {
   });
 }
 
-export function getHumanoid() { return humanoid; }
-export function setHumanoidCharacter(id) { if (humanoid) humanoid.setCharacter(id); }
+export function getHumanoid() { return activeRenderer; }
+
+export function setHumanoidCharacter(id) {
+  const container = document.getElementById('avatar-container');
+  if (!container) return;
+
+  if (id === 'dots') {
+    // Switch to dots renderer
+    activeMode = 'dots';
+    // Hide the 3D canvas
+    if (humanoid && humanoid.renderer) {
+      humanoid.renderer.domElement.style.display = 'none';
+    }
+    if (!dotsRenderer) {
+      dotsRenderer = new DotsRenderer(container);
+    } else {
+      dotsRenderer.canvas.style.display = 'block';
+    }
+    activeRenderer = dotsRenderer;
+  } else {
+    // Switch to 3D humanoid
+    activeMode = id;
+    // Hide dots canvas
+    if (dotsRenderer) {
+      dotsRenderer.canvas.style.display = 'none';
+    }
+    if (humanoid) {
+      humanoid.renderer.domElement.style.display = 'block';
+      humanoid.setCharacter(id);
+    }
+    activeRenderer = humanoid;
+  }
+}
 
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
