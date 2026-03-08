@@ -325,7 +325,15 @@ export function initViewer() {
   slider?.addEventListener('input', () => {
     speed = parseFloat(slider.value);
     sval.textContent = `${speed}x`;
-    if (humanoid) humanoid.setSpeed(speed);
+    if (activeRenderer) activeRenderer.setSpeed(speed);
+  });
+
+  const zoomSlider = document.getElementById('zoom-slider');
+  const zoomVal = document.getElementById('zoom-val');
+  zoomSlider?.addEventListener('input', () => {
+    const pct = parseInt(zoomSlider.value);
+    zoomVal.textContent = `${pct}%`;
+    if (activeRenderer && activeRenderer.setZoom) activeRenderer.setZoom(pct);
   });
 }
 
