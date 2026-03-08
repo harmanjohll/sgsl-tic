@@ -13,6 +13,7 @@ import { getEmail } from './auth.js';
 
 let tracker = null;
 let recording = false;
+let uploading = false;  // guard against double-submission
 let frames = [];
 let recStart = 0;
 let timerInterval = null;
@@ -103,6 +104,9 @@ async function finishRecording(statusEl, recordBtn, stopBtn) {
   clearInterval(timerInterval);
   document.getElementById('rec-badge').classList.add('hidden');
 
+  // Guard against double-submission (auto-stop + manual stop race)
+  if (uploading) return;
+
   // Trim start and end frames to remove button-click artefacts
   // Use actual FPS from recording rather than assuming 30fps
   const elapsed = (Date.now() - recStart) / 1000;
@@ -115,22 +119,29 @@ async function finishRecording(statusEl, recordBtn, stopBtn) {
 
   if (trimmed.length < 3) {
     setStatus(statusEl, `Recording too short (${frames.length} frames at ~${Math.round(actualFps)}fps). Try again — hold the sign longer.`, 'error');
+    frames = [];
     recordBtn.disabled = false;
     return;
   }
 
   const label = document.getElementById('label-input').value.trim().toLowerCase();
   setStatus(statusEl, `Uploading "${label}" (${trimmed.length} frames, trimmed from ${frames.length})...`, 'loading');
+  uploading = true;
 
   try {
     const result = await contribute(label, trimmed, getEmail());
     setStatus(statusEl, `Saved "${label}" — ${result.frames} frames, ${result.features} features.`, 'success');
     toast(`Sign "${label}" contributed!`, 'success');
+
+    // Notify other modules (viewer) that library changed
+    window.dispatchEvent(new CustomEvent('sgsl-library-changed'));
   } catch (err) {
     setStatus(statusEl, err.message, 'error');
     toast('Upload failed', 'error');
   }
 
+  frames = [];
+  uploading = false;
   recordBtn.disabled = false;
 }
 
