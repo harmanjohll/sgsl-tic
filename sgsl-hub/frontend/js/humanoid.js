@@ -978,17 +978,18 @@ export class HumanoidAvatar {
         const dot = v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
         const m1 = Math.hypot(v1[0], v1[1], v1[2]) || 1;
         const m2 = Math.hypot(v2[0], v2[1], v2[2]) || 1;
+        // acos gives the bend angle (0 = straight, π = fully folded)
+        // Always positive — fingers only flex (curl), never hyperextend
         let angle = Math.acos(Math.max(-1, Math.min(1, dot / (m1 * m2))));
-        if (v1[0] * v2[1] - v1[1] * v2[0] < 0) angle = -angle;
 
-        // DIP = 2/3 × PIP coupling
+        // DIP = 2/3 × PIP coupling (biomechanical constraint)
         if (finger !== 'Thumb' && j === 2 && chain.length >= 3) {
           const pipBone = chain[1];
-          angle = pipBone.rotation.x * WBC.DIP_PIP;
+          angle = Math.abs(pipBone.rotation.x) * WBC.DIP_PIP;
         }
 
         const maxFlex = finger === 'Thumb' ? Math.PI * 0.5 : Math.PI * 0.55;
-        angle = Math.max(-0.2, Math.min(maxFlex, angle));
+        angle = Math.min(maxFlex, angle);
 
         const restQ = this._restPose[`${side}_${finger}_${j}`];
         if (restQ) chain[j].quaternion.copy(restQ);
