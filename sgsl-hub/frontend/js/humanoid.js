@@ -609,7 +609,7 @@ export class HumanoidAvatar {
     // Camera: frame upper body for signing visibility
     // Model is normalized to 1.7m. Show head + torso + signing space.
     const camY = height * 0.55;       // chest/shoulder level
-    const camDist = height * 7.0;     // far enough to see full body at smaller apparent size
+    const camDist = height * 14.0;    // far enough to see full body at small apparent size
     this.camera.position.set(0, camY, camDist);
     this.camera.lookAt(0, camY, 0);
     this.camera.near = 0.01;
