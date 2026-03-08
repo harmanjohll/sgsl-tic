@@ -335,6 +335,11 @@ export class HumanoidAvatar {
     this.loadingEl = null;
     this._xFlip = 1;  // +1 or -1, set after model orientation detection
 
+    // Hand orientation debug
+    this._handRotOffset = { x: 0, y: 0, z: 0 }; // degrees, applied after auto-orientation
+    this._autoHandOrientation = true;
+    this._debugAxesHelpers = [];
+
     // Animation
     this.seq = [];
     this.playing = false;
@@ -969,6 +974,100 @@ export class HumanoidAvatar {
     }
   }
 
+  // ─── Hand orientation from landmarks ──────────────────────
+
+  _applyHandOrientation(handLM, side) {
+    const handBone = this.bones[side + 'Hand'];
+    if (!handBone || !handLM || handLM.length < 21) return;
+
+    if (!this._autoHandOrientation) {
+      // Manual-only mode: apply rest pose + debug offsets
+      const restQ = this._restPose[side + 'Hand'];
+      if (restQ) handBone.quaternion.copy(restQ);
+      const off = this._handRotOffset;
+      if (off.x) handBone.rotateX(off.x * Math.PI / 180);
+      if (off.y) handBone.rotateY(off.y * Math.PI / 180);
+      if (off.z) handBone.rotateZ(off.z * Math.PI / 180);
+      this._filterBone(side + 'Hand', handBone);
+      return;
+    }
+
+    const w = handLM[0], imcp = handLM[5], mmcp = handLM[9], pmcp = handLM[17];
+
+    // Direction transform: MP image space → world space
+    // In _lmToWorld the offsets cancel for directions; scale normalizes out
+    // dx_world = -dx * xFlip, dy_world = -dy, dz_world = -dz
+    const xf = this._xFlip;
+    const fingerDir = new THREE.Vector3(
+      -(mmcp[0] - w[0]) * xf,
+      -(mmcp[1] - w[1]),
+      -((mmcp[2] ?? 0) - (w[2] ?? 0))
+    ).normalize();
+
+    const palmW = new THREE.Vector3(
+      -(pmcp[0] - imcp[0]) * xf,
+      -(pmcp[1] - imcp[1]),
+      -((pmcp[2] ?? 0) - (imcp[2] ?? 0))
+    ).normalize();
+
+    // Palm normal via cross product; flip for left hand chirality
+    const palmN = new THREE.Vector3().crossVectors(palmW, fingerDir).normalize();
+    if (side === 'left') palmN.negate();
+
+    // Ensure right-handed basis: X = Y × Z
+    const basisX = new THREE.Vector3().crossVectors(fingerDir, palmN).normalize();
+
+    // Build world-space rotation: X=basisX, Y=fingerDir, Z=palmN
+    const mat = new THREE.Matrix4().makeBasis(basisX, fingerDir, palmN);
+    const desiredWorldQ = new THREE.Quaternion().setFromRotationMatrix(mat);
+
+    // Convert to bone-local: localQ = parentQInv * desiredWorldQ
+    handBone.parent.updateWorldMatrix(true, false);
+    const parentQ = new THREE.Quaternion();
+    handBone.parent.getWorldQuaternion(parentQ);
+    handBone.quaternion.copy(desiredWorldQ.premultiply(parentQ.clone().invert()));
+
+    // Apply debug correction offset (in bone-local Euler degrees)
+    const off = this._handRotOffset;
+    if (off.x) handBone.rotateX(off.x * Math.PI / 180);
+    if (off.y) handBone.rotateY(off.y * Math.PI / 180);
+    if (off.z) handBone.rotateZ(off.z * Math.PI / 180);
+
+    this._filterBone(side + 'Hand', handBone);
+  }
+
+  // ─── Debug helpers ─────────────────────────────────────────
+
+  enableDebugAxes(on) {
+    // Remove existing helpers
+    for (const h of this._debugAxesHelpers) {
+      if (h.parent) h.parent.remove(h);
+    }
+    this._debugAxesHelpers = [];
+    if (!on || !this.loaded) return;
+
+    for (const side of ['left', 'right']) {
+      for (const part of ['UpperArm', 'ForeArm', 'Hand']) {
+        const bone = this.bones[side + part];
+        if (bone) {
+          const axes = new THREE.AxesHelper(0.1);
+          axes.renderOrder = 999;
+          axes.material.depthTest = false;
+          bone.add(axes);
+          this._debugAxesHelpers.push(axes);
+        }
+      }
+    }
+  }
+
+  setHandRotationOffset(x, y, z) {
+    this._handRotOffset = { x, y, z };
+  }
+
+  setAutoHandOrientation(on) {
+    this._autoHandOrientation = on;
+  }
+
   // ─── Layer C: Finger pose with DIP = 2/3 × PIP coupling ──
 
   _fingerPose(handLM, side) {
@@ -1128,11 +1227,13 @@ export class HumanoidAvatar {
 
     if (rh && rh.length >= 21) {
       this._solveArmIK(this._lmToWorld(rh[0]), 'right');
+      this._applyHandOrientation(rh, 'right');
       this._fingerPose(rh, 'right');
     } else this._armRest('right');
 
     if (lh && lh.length >= 21) {
       this._solveArmIK(this._lmToWorld(lh[0]), 'left');
+      this._applyHandOrientation(lh, 'left');
       this._fingerPose(lh, 'left');
     } else this._armRest('left');
 

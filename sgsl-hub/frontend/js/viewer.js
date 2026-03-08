@@ -341,6 +341,44 @@ export function initViewer() {
     zoomVal.textContent = `${pct}%`;
     if (activeRenderer && activeRenderer.setZoom) activeRenderer.setZoom(pct);
   });
+
+  // ─── Debug controls for hand orientation ─────────────────
+  const axesToggle = document.getElementById('debug-axes-toggle');
+  const autoOrient = document.getElementById('debug-auto-orient');
+  const rotSliders = ['x', 'y', 'z'].map(axis => ({
+    axis,
+    slider: document.getElementById(`hand-rot-${axis}`),
+    label: document.getElementById(`hand-rot-${axis}-val`),
+  }));
+  const resetBtn = document.getElementById('hand-rot-reset');
+
+  axesToggle?.addEventListener('change', () => {
+    if (humanoid) humanoid.enableDebugAxes(axesToggle.checked);
+  });
+
+  autoOrient?.addEventListener('change', () => {
+    if (humanoid) humanoid.setAutoHandOrientation(autoOrient.checked);
+  });
+
+  for (const { axis, slider: sl, label: lb } of rotSliders) {
+    sl?.addEventListener('input', () => {
+      lb.textContent = `${sl.value}\u00B0`;
+      if (humanoid) {
+        humanoid.setHandRotationOffset(
+          parseFloat(document.getElementById('hand-rot-x').value),
+          parseFloat(document.getElementById('hand-rot-y').value),
+          parseFloat(document.getElementById('hand-rot-z').value),
+        );
+      }
+    });
+  }
+
+  resetBtn?.addEventListener('click', () => {
+    for (const { slider: sl, label: lb } of rotSliders) {
+      if (sl) { sl.value = '0'; lb.textContent = '0\u00B0'; }
+    }
+    if (humanoid) humanoid.setHandRotationOffset(0, 0, 0);
+  });
 }
 
 export function getHumanoid() { return activeRenderer; }
