@@ -5,6 +5,9 @@
    as colored dots and connections. Useful for debugging sign
    accuracy without the complexity of the 3D avatar.
 
+   Includes a One-Euro filter for temporal stabilization to
+   reduce jitter in landmark positions frame-to-frame.
+
    Implements the same playback API as HumanoidAvatar so it can
    be swapped in as a drop-in replacement.
    ============================================================ */
@@ -19,6 +22,91 @@ const HAND_CONNECTIONS = [
 ];
 
 const FINGER_TIPS = [4, 8, 12, 16, 20];
+
+// ─── One-Euro Filter for landmark stabilization ─────────────
+// Reduces jitter while preserving fast movements
+
+class OneEuroScalar {
+  constructor(minCutoff = 1.0, beta = 0.007, dCutoff = 1.0) {
+    this.minCutoff = minCutoff;
+    this.beta = beta;
+    this.dCutoff = dCutoff;
+    this.xPrev = null;
+    this.dxPrev = 0;
+    this.tPrev = null;
+  }
+
+  _alpha(cutoff, dt) {
+    const tau = 1.0 / (2 * Math.PI * cutoff);
+    return 1.0 / (1.0 + tau / dt);
+  }
+
+  filter(x, t) {
+    if (this.tPrev === null) {
+      this.xPrev = x;
+      this.tPrev = t;
+      return x;
+    }
+    const dt = Math.max(t - this.tPrev, 1e-6);
+
+    // Derivative (speed)
+    const dx = (x - this.xPrev) / dt;
+    const adx = this._alpha(this.dCutoff, dt);
+    const dxHat = adx * dx + (1 - adx) * this.dxPrev;
+
+    // Adaptive cutoff based on speed
+    const cutoff = this.minCutoff + this.beta * Math.abs(dxHat);
+    const ax = this._alpha(cutoff, dt);
+    const xHat = ax * x + (1 - ax) * this.xPrev;
+
+    this.xPrev = xHat;
+    this.dxPrev = dxHat;
+    this.tPrev = t;
+    return xHat;
+  }
+
+  reset() {
+    this.xPrev = null;
+    this.dxPrev = 0;
+    this.tPrev = null;
+  }
+}
+
+class LandmarkFilter {
+  constructor(count, minCutoff = 3.0, beta = 0.05) {
+    this.filters = [];
+    for (let i = 0; i < count; i++) {
+      this.filters.push({
+        x: new OneEuroScalar(minCutoff, beta),
+        y: new OneEuroScalar(minCutoff, beta),
+        z: new OneEuroScalar(minCutoff, beta),
+      });
+    }
+  }
+
+  filter(landmarks, t) {
+    if (!landmarks) return null;
+    return landmarks.map((lm, i) => {
+      if (i >= this.filters.length) return lm;
+      const f = this.filters[i];
+      return [
+        f.x.filter(lm[0], t),
+        f.y.filter(lm[1], t),
+        f.z.filter(lm[2] ?? 0, t),
+      ];
+    });
+  }
+
+  reset() {
+    for (const f of this.filters) {
+      f.x.reset();
+      f.y.reset();
+      f.z.reset();
+    }
+  }
+}
+
+// ─── Dots Renderer ──────────────────────────────────────────
 
 export class DotsRenderer {
   constructor(container) {
@@ -38,6 +126,13 @@ export class DotsRenderer {
     this._onFrame = null;
     this._onDone = null;
     this.loaded = true;
+
+    // Stabilization filters (21 landmarks per hand, face subset)
+    this._filters = {
+      leftHand:  new LandmarkFilter(21, 3.0, 0.05),
+      rightHand: new LandmarkFilter(21, 3.0, 0.05),
+      face:      new LandmarkFilter(50, 2.0, 0.03),
+    };
 
     // Resize observer
     this._ro = new ResizeObserver(() => this._resize());
@@ -104,6 +199,24 @@ export class DotsRenderer {
     ]);
   }
 
+  // Apply stabilization filter to a frame
+  _stabilize(frame) {
+    if (!frame) return frame;
+    const t = performance.now() / 1000;
+    return {
+      leftHand:  this._filters.leftHand.filter(frame.leftHand, t),
+      rightHand: this._filters.rightHand.filter(frame.rightHand, t),
+      face:      this._filters.face.filter(frame.face, t),
+      pose:      frame.pose, // pass through
+    };
+  }
+
+  _resetFilters() {
+    this._filters.leftHand.reset();
+    this._filters.rightHand.reset();
+    this._filters.face.reset();
+  }
+
   // ─── Drawing ──────────────────────────────────────────────
 
   _drawHand(lm, strokeColor, dotColor, label) {
@@ -163,18 +276,22 @@ export class DotsRenderer {
 
   render(frame) {
     if (!frame) { this._drawEmpty(); return; }
+
+    // Apply stabilization
+    const stable = this._stabilize(frame);
+
     const { ctx, W, H } = this;
     ctx.clearRect(0, 0, W, H);
 
     // Draw face first (background layer)
-    if (frame.face) this._drawFace(frame.face);
+    if (stable.face) this._drawFace(stable.face);
 
     // Draw hands
-    if (frame.rightHand) {
-      this._drawHand(frame.rightHand, 'rgba(108, 99, 255, 0.7)', '#6C63FF', 'R');
+    if (stable.rightHand) {
+      this._drawHand(stable.rightHand, 'rgba(108, 99, 255, 0.7)', '#6C63FF', 'R');
     }
-    if (frame.leftHand) {
-      this._drawHand(frame.leftHand, 'rgba(72, 199, 142, 0.7)', '#48C78E', 'L');
+    if (stable.leftHand) {
+      this._drawHand(stable.leftHand, 'rgba(72, 199, 142, 0.7)', '#48C78E', 'L');
     }
 
     // Frame counter in corner
@@ -203,6 +320,7 @@ export class DotsRenderer {
     this._onFrame = onFrame;
     this._onDone = onDone;
     this.lastT = performance.now();
+    this._resetFilters();
 
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this._tick();
@@ -245,6 +363,7 @@ export class DotsRenderer {
     this.fi = 0; this.fAcc = 0;
     this.paused = false; this.playing = true;
     this.lastT = performance.now();
+    this._resetFilters();
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this._tick();
   }
