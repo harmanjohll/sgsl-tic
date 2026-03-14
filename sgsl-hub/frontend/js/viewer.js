@@ -133,15 +133,26 @@ async function playSentence(glossTokens) {
     return;
   }
 
-  // Build a combined sequence with transition pauses between signs
-  const PAUSE_FRAMES = 6; // ~200ms pause at 30fps
+  // Build a combined sequence with smooth crossfade transitions between signs
+  const CROSSFADE_FRAMES = 8; // ~267ms at 30fps
   const combined = [];
   for (let i = 0; i < signSequences.length; i++) {
     combined.push(...signSequences[i].frames);
-    // Insert pause (repeat last frame) between signs
+    // Insert crossfade interpolation between signs
     if (i < signSequences.length - 1 && signSequences[i].frames.length > 0) {
       const lastFrame = signSequences[i].frames[signSequences[i].frames.length - 1];
-      for (let p = 0; p < PAUSE_FRAMES; p++) combined.push(lastFrame);
+      const nextFirst = signSequences[i + 1].frames[0];
+      if (nextFirst) {
+        for (let p = 0; p < CROSSFADE_FRAMES; p++) {
+          const t = (p + 1) / (CROSSFADE_FRAMES + 1);
+          // Smoothstep easing: 3t^2 - 2t^3
+          const s = t * t * (3 - 2 * t);
+          combined.push(lerpFrame(lastFrame, nextFirst, s));
+        }
+      } else {
+        // Fallback: repeat last frame if next sign has no frames
+        for (let p = 0; p < CROSSFADE_FRAMES; p++) combined.push(lastFrame);
+      }
     }
   }
 
@@ -413,6 +424,29 @@ export function setHumanoidCharacter(id) {
     }
     activeRenderer = humanoid;
   }
+}
+
+// ─── Landmark interpolation helpers for crossfade ──────────
+
+function lerpHand(a, b, t) {
+  if (!a) return b;
+  if (!b) return a;
+  return b.map((lm, i) => [
+    a[i][0] + (lm[0] - a[i][0]) * t,
+    a[i][1] + (lm[1] - a[i][1]) * t,
+    (a[i][2] ?? 0) + ((lm[2] ?? 0) - (a[i][2] ?? 0)) * t,
+  ]);
+}
+
+function lerpFrame(a, b, t) {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    leftHand: lerpHand(a.leftHand, b.leftHand, t),
+    rightHand: lerpHand(a.rightHand, b.rightHand, t),
+    face: lerpHand(a.face, b.face, t),
+    pose: lerpHand(a.pose, b.pose, t),
+  };
 }
 
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }

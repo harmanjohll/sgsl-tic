@@ -682,6 +682,7 @@ export class HumanoidAvatar {
     this._mapFingerBones('right');
     this._saveRestPose();
     this._cacheArmRestDirs();
+    this._cacheHandRestAxes();
     this._initBoneFilters();
 
     // Determine X-flip: check which side the avatar's right shoulder is on
@@ -889,6 +890,81 @@ export class HumanoidAvatar {
     }
   }
 
+  // Cache hand bone axis conventions at load time by introspecting the skeleton
+  _cacheHandRestAxes() {
+    this._handRestInfo = {};
+    this.model.updateMatrixWorld(true);
+
+    for (const side of ['left', 'right']) {
+      const handBone = this.bones[side + 'Hand'];
+      if (!handBone) continue;
+
+      // Find first finger bone to determine finger direction in bone-local space
+      const fingerChain = this.fingerBones[side]['Middle']
+                       || this.fingerBones[side]['Index']
+                       || this.fingerBones[side]['Ring'];
+      if (!fingerChain || fingerChain.length === 0) continue;
+
+      const firstFingerBone = fingerChain[0];
+
+      // Get world positions at rest
+      const handWorldPos = new THREE.Vector3();
+      const fingerWorldPos = new THREE.Vector3();
+      handBone.getWorldPosition(handWorldPos);
+      firstFingerBone.getWorldPosition(fingerWorldPos);
+
+      // Finger direction in world space at rest (hand → first finger bone)
+      const restFingerDirWorld = new THREE.Vector3()
+        .subVectors(fingerWorldPos, handWorldPos);
+      if (restFingerDirWorld.length() < 0.001) continue;
+      restFingerDirWorld.normalize();
+
+      // Get hand bone's rest world quaternion
+      const handRestWorldQ = new THREE.Quaternion();
+      handBone.getWorldQuaternion(handRestWorldQ);
+      const handRestWorldQInv = handRestWorldQ.clone().invert();
+
+      // Transform finger direction to hand-bone-local space
+      const fingerDirLocal = restFingerDirWorld.clone()
+        .applyQuaternion(handRestWorldQInv);
+
+      // Compute palm normal from pinky/index bone positions
+      let palmNormalLocal = new THREE.Vector3(0, 0, 1); // fallback
+      const pinkyChain = this.fingerBones[side]['Pinky'];
+      const indexChain = this.fingerBones[side]['Index'];
+      if (pinkyChain?.length > 0 && indexChain?.length > 0) {
+        const pinkyPos = new THREE.Vector3();
+        const indexPos = new THREE.Vector3();
+        pinkyChain[0].getWorldPosition(pinkyPos);
+        indexChain[0].getWorldPosition(indexPos);
+
+        const palmWidthWorld = new THREE.Vector3()
+          .subVectors(pinkyPos, indexPos).normalize();
+        const palmNormalWorld = new THREE.Vector3()
+          .crossVectors(palmWidthWorld, restFingerDirWorld).normalize();
+
+        palmNormalLocal = palmNormalWorld.clone()
+          .applyQuaternion(handRestWorldQInv);
+
+        // Sanity: in T-pose, palm normal should face roughly forward (+Z world)
+        // If it faces backward, flip it
+        if (palmNormalWorld.z < -0.3) {
+          palmNormalLocal.negate();
+          console.log(`[Avatar] Flipped palm normal for ${side} hand`);
+        }
+      }
+
+      this._handRestInfo[side] = {
+        fingerDirLocal,
+        palmNormalLocal,
+        restWorldQ: handRestWorldQ.clone(),
+        restLocalQ: this._restPose[side + 'Hand']?.clone() || new THREE.Quaternion(),
+      };
+
+      console.log(`[Avatar] ${side} hand axes: fingerLocal=(${fingerDirLocal.x.toFixed(2)},${fingerDirLocal.y.toFixed(2)},${fingerDirLocal.z.toFixed(2)}) palmNLocal=(${palmNormalLocal.x.toFixed(2)},${palmNormalLocal.y.toFixed(2)},${palmNormalLocal.z.toFixed(2)})`);
+    }
+  }
+
   _resetFilters() {
     for (const f of Object.values(this._boneFilters)) {
       f.reset();
@@ -915,7 +991,7 @@ export class HumanoidAvatar {
     );
   }
 
-  _solveArmIK(target, side) {
+  _solveArmIK(target, side, elbowHint = null) {
     const upperArm = this.bones[side + 'UpperArm'];
     const foreArm = this.bones[side + 'ForeArm'];
     const hand = this.bones[side + 'Hand'];
@@ -957,11 +1033,47 @@ export class HumanoidAvatar {
       : new THREE.Vector3(side === 'left' ? -1 : 1, 0, 0);
 
     // Compose delta rotation with rest quaternion (q * restQ)
-    // q maps restDir→localDir, restQ maps bone-local-axis→restDir
-    // Combined: bone-local-axis → localDir
     const q = new THREE.Quaternion().setFromUnitVectors(restDir, localDir);
     const restQ = restUpperQ || new THREE.Quaternion();
     upperArm.quaternion.multiplyQuaternions(q, restQ);
+
+    // ─── Pole vector: twist upper arm so elbow points naturally ─────
+    // Default pole target: behind and below the shoulder
+    const pole = elbowHint || new THREE.Vector3(
+      shoulderWorld.x + (side === 'left' ? -0.1 : 0.1),
+      shoulderWorld.y - 0.3,
+      shoulderWorld.z - 0.3
+    );
+
+    // Update world matrices to get current elbow position after direction set
+    upperArm.updateWorldMatrix(true, true);
+    const elbowPos = new THREE.Vector3();
+    foreArm.getWorldPosition(elbowPos);
+
+    // Project pole and elbow onto the plane perpendicular to shoulder→target
+    const axis = toTarget.clone().normalize();
+    const elbowVec = elbowPos.clone().sub(shoulderWorld);
+    const poleVec = pole.clone().sub(shoulderWorld);
+
+    // Remove component along the arm axis
+    const elbowProj = elbowVec.clone().addScaledVector(axis, -elbowVec.dot(axis));
+    const poleProj = poleVec.clone().addScaledVector(axis, -poleVec.dot(axis));
+
+    if (elbowProj.length() > 0.001 && poleProj.length() > 0.001) {
+      elbowProj.normalize();
+      poleProj.normalize();
+
+      let twistAngle = Math.acos(Math.max(-1, Math.min(1, elbowProj.dot(poleProj))));
+      // Determine sign via cross product
+      const cross = new THREE.Vector3().crossVectors(elbowProj, poleProj);
+      if (cross.dot(axis) < 0) twistAngle = -twistAngle;
+
+      // Apply twist in parent-local space around the arm direction
+      if (Math.abs(twistAngle) > 0.01) {
+        const twistQ = new THREE.Quaternion().setFromAxisAngle(localDir, twistAngle);
+        upperArm.quaternion.premultiply(twistQ);
+      }
+    }
 
     // Apply temporal filtering to upper arm
     this._filterBone(side + 'UpperArm', upperArm);
@@ -978,10 +1090,11 @@ export class HumanoidAvatar {
 
   _applyHandOrientation(handLM, side) {
     const handBone = this.bones[side + 'Hand'];
+    const info = this._handRestInfo?.[side];
     if (!handBone || !handLM || handLM.length < 21) return;
 
-    if (!this._autoHandOrientation) {
-      // Manual-only mode: apply rest pose + debug offsets
+    if (!this._autoHandOrientation || !info) {
+      // Manual-only mode or no introspected axes: apply rest pose + debug offsets
       const restQ = this._restPose[side + 'Hand'];
       if (restQ) handBone.quaternion.copy(restQ);
       const off = this._handRotOffset;
@@ -1004,28 +1117,46 @@ export class HumanoidAvatar {
       -((mmcp[2] ?? 0) - (w[2] ?? 0))
     ).normalize();
 
-    const palmW = new THREE.Vector3(
+    const palmWidth = new THREE.Vector3(
       -(pmcp[0] - imcp[0]) * xf,
       -(pmcp[1] - imcp[1]),
       -((pmcp[2] ?? 0) - (imcp[2] ?? 0))
     ).normalize();
 
     // Palm normal via cross product; flip for left hand chirality
-    const palmN = new THREE.Vector3().crossVectors(palmW, fingerDir).normalize();
-    if (side === 'left') palmN.negate();
+    const palmNormal = new THREE.Vector3()
+      .crossVectors(palmWidth, fingerDir).normalize();
+    if (side === 'left') palmNormal.negate();
 
-    // Ensure right-handed basis: X = Y × Z
-    const basisX = new THREE.Vector3().crossVectors(fingerDir, palmN).normalize();
+    // Ensure right-handed basis
+    const desX = new THREE.Vector3()
+      .crossVectors(fingerDir, palmNormal).normalize();
 
-    // Build world-space rotation: X=basisX, Y=fingerDir, Z=palmN
-    const mat = new THREE.Matrix4().makeBasis(basisX, fingerDir, palmN);
-    const desiredWorldQ = new THREE.Quaternion().setFromRotationMatrix(mat);
+    // Build target world-space basis from landmark-derived axes
+    const worldBasis = new THREE.Matrix4().makeBasis(desX, fingerDir, palmNormal);
+    const worldBasisQ = new THREE.Quaternion().setFromRotationMatrix(worldBasis);
 
-    // Convert to bone-local: localQ = parentQInv * desiredWorldQ
+    // Build rest-pose basis from introspected bone-local axes
+    // These are the axes we discovered at load time in the hand bone's local space
+    const localX = new THREE.Vector3()
+      .crossVectors(info.fingerDirLocal, info.palmNormalLocal).normalize();
+    const localBasis = new THREE.Matrix4()
+      .makeBasis(localX, info.fingerDirLocal, info.palmNormalLocal);
+    const localBasisQ = new THREE.Quaternion().setFromRotationMatrix(localBasis);
+
+    // desiredWorldQ maps the bone's local axes to the target world directions
+    // desiredWorldQ * localBasisQ = worldBasisQ
+    // → desiredWorldQ = worldBasisQ * inverse(localBasisQ)
+    const desiredWorldQ = worldBasisQ.clone()
+      .multiply(localBasisQ.clone().invert());
+
+    // Convert to bone-local: localQ = inverse(parentWorldQ) * desiredWorldQ
     handBone.parent.updateWorldMatrix(true, false);
     const parentQ = new THREE.Quaternion();
     handBone.parent.getWorldQuaternion(parentQ);
-    handBone.quaternion.copy(desiredWorldQ.premultiply(parentQ.clone().invert()));
+    handBone.quaternion.copy(
+      desiredWorldQ.premultiply(parentQ.clone().invert())
+    );
 
     // Apply debug correction offset (in bone-local Euler degrees)
     const off = this._handRotOffset;
@@ -1039,9 +1170,11 @@ export class HumanoidAvatar {
   // ─── Debug helpers ─────────────────────────────────────────
 
   enableDebugAxes(on) {
-    // Remove existing helpers
+    // Remove and dispose existing helpers
     for (const h of this._debugAxesHelpers) {
       if (h.parent) h.parent.remove(h);
+      h.material?.dispose();
+      h.geometry?.dispose();
     }
     this._debugAxesHelpers = [];
     if (!on || !this.loaded) return;
@@ -1226,13 +1359,15 @@ export class HumanoidAvatar {
     }
 
     if (rh && rh.length >= 21) {
-      this._solveArmIK(this._lmToWorld(rh[0]), 'right');
+      const elbowR = pose?.[14] ? this._lmToWorld(pose[14]) : null;
+      this._solveArmIK(this._lmToWorld(rh[0]), 'right', elbowR);
       this._applyHandOrientation(rh, 'right');
       this._fingerPose(rh, 'right');
     } else this._armRest('right');
 
     if (lh && lh.length >= 21) {
-      this._solveArmIK(this._lmToWorld(lh[0]), 'left');
+      const elbowL = pose?.[13] ? this._lmToWorld(pose[13]) : null;
+      this._solveArmIK(this._lmToWorld(lh[0]), 'left', elbowL);
       this._applyHandOrientation(lh, 'left');
       this._fingerPose(lh, 'left');
     } else this._armRest('left');
@@ -1456,6 +1591,27 @@ export class HumanoidAvatar {
     if (!AVATARS[id] || id === this.charId) return;
     this.charId = id;
     if (this.model) {
+      // Dispose GPU resources before removing
+      this.model.traverse(node => {
+        if (node.isMesh) {
+          node.geometry?.dispose();
+          const materials = Array.isArray(node.material) ? node.material : [node.material];
+          for (const mat of materials) {
+            if (!mat) continue;
+            for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap']) {
+              mat[key]?.dispose();
+            }
+            mat.dispose();
+          }
+        }
+      });
+      // Clean up debug axis helpers
+      for (const h of this._debugAxesHelpers) {
+        if (h.parent) h.parent.remove(h);
+        h.material?.dispose();
+        h.geometry?.dispose();
+      }
+      this._debugAxesHelpers = [];
       this.scene.remove(this.model);
       this.model = null;
     }
