@@ -1250,11 +1250,22 @@ export class HumanoidAvatar {
 
     // ─── Pole vector → bend direction ─────
     const poleScale = (L1 + L2) * 0.35;
-    const pole = elbowHint || new THREE.Vector3(
-      shoulderWorld.x + (side === 'left' ? -1 : 1) * poleScale * 0.3,
-      shoulderWorld.y - poleScale,
-      shoulderWorld.z - poleScale
-    );
+    // If elbowHint provided, neutralize its z component — MediaPipe pose z
+    // for elbows is unreliable/exaggerated and overwhelms the pole direction,
+    // making the arm extend forward instead of hanging naturally.
+    // Keep x,y from the hint (reliable image-space positioning).
+    let pole;
+    if (elbowHint) {
+      pole = new THREE.Vector3(elbowHint.x, elbowHint.y, shoulderWorld.z);
+    } else {
+      // Default: below and to the side of the shoulder
+      // side sign: right arm elbow points right (-x), left arm elbow points left (+x)
+      pole = new THREE.Vector3(
+        shoulderWorld.x + (side === 'left' ? 1 : -1) * poleScale,
+        shoulderWorld.y - poleScale,
+        shoulderWorld.z
+      );
+    }
 
     // Project pole onto plane perpendicular to arm axis
     const poleVec = pole.clone().sub(shoulderWorld);
