@@ -905,6 +905,10 @@ export class HumanoidAvatar {
         this._forearmRestDir[side] = this._armRestDir[side].clone();
       }
 
+      const frd = this._forearmRestDir[side];
+      const ard = this._armRestDir[side];
+      console.log(`[Cache] ${side} armRestDir=(${ard.x.toFixed(2)},${ard.y.toFixed(2)},${ard.z.toFixed(2)}) forearmRestDir=(${frd.x.toFixed(2)},${frd.y.toFixed(2)},${frd.z.toFixed(2)}) L1=${this._armLengths[side].L1.toFixed(3)} L2=${this._armLengths[side].L2.toFixed(3)} foreParent=${foreArm.parent?.name}`);
+
     }
   }
 
@@ -1309,8 +1313,19 @@ export class HumanoidAvatar {
     this._filterBone(side + 'ForeArm', foreArm);
 
     if (this._debugFrame < 3) {
-      const elbowAngleDeg = (Math.acos(cosA) * 180 / Math.PI).toFixed(1);
-      console.log(`[IK-2bone] ${side} shoulderAngle=${elbowAngleDeg}° d=${d.toFixed(3)} bendDir=(${bendDir.x.toFixed(2)},${bendDir.y.toFixed(2)},${bendDir.z.toFixed(2)}) pole=(${pole.x.toFixed(3)},${pole.y.toFixed(3)},${pole.z.toFixed(3)})`);
+      // Verify: where does the wrist actually end up?
+      foreArm.updateWorldMatrix(true, true);
+      const handBone = this.bones[side + 'Hand'];
+      let actualWrist = new THREE.Vector3();
+      if (handBone) { handBone.updateWorldMatrix(true, true); handBone.getWorldPosition(actualWrist); }
+      const wristError = actualWrist.distanceTo(target);
+
+      const shoulderAngleDeg = (shoulderAngle * 180 / Math.PI).toFixed(1);
+      const _f = v => `(${v.x.toFixed(3)},${v.y.toFixed(3)},${v.z.toFixed(3)})`;
+      console.log(`[IK-2bone] ${side} shAngle=${shoulderAngleDeg}° d=${d.toFixed(3)} armAxis=${_f(armAxis)} bendDir=${_f(bendDir)} upperDir=${_f(upperDir)}`);
+      console.log(`[IK-2bone] ${side} pole=${_f(pole)} elbowHint=${elbowHint ? 'yes' : 'no'} poleVec=${_f(poleVec)}`);
+      console.log(`[IK-2bone] ${side} localUpperDir=${_f(localUpperDir)} restDir=${_f(restDir)} foreRestDir=${_f(foreRestDir)} localForeDir=${_f(localForeDir)}`);
+      console.log(`[IK-2bone] ${side} shoulder=${_f(shoulderWorld)} elbowPos=${_f(elbowWorldPos)} target=${_f(target)} actualWrist=${_f(actualWrist)} wristError=${wristError.toFixed(4)}`);
     }
   }
 
