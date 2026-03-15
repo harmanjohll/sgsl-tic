@@ -1216,79 +1216,74 @@ export class HumanoidAvatar {
     return shoulderWorld.add(offset);
   }
 
-  _solveArmIK(target, side, elbowHint = null) {
+  // ─── Direct bone rotation from MediaPipe pose landmarks ─────────
+  // Instead of IK (which constrains elbow position geometrically),
+  // directly copy the signer's arm configuration from pose landmarks.
+  // shoulder→elbow sets upper arm direction, elbow→wrist sets forearm direction.
+  // Falls back to IK-style target pointing when pose data is unavailable.
+  _solveArmDirect(side, pose, wristLM) {
     const upperArm = this.bones[side + 'UpperArm'];
     const foreArm = this.bones[side + 'ForeArm'];
     if (!upperArm || !foreArm) return;
 
-    try {    // Reset to rest pose BEFORE computing world positions
+    try {
+    // Reset to rest pose
     const restUpperQ = this._restPose[side + 'UpperArm'];
     if (restUpperQ) upperArm.quaternion.copy(restUpperQ);
     const restForeQ = this._restPose[side + 'ForeArm'];
     if (restForeQ) foreArm.quaternion.copy(restForeQ);
     upperArm.updateWorldMatrix(true, true);
 
-    const shoulderWorld = new THREE.Vector3();
-    upperArm.getWorldPosition(shoulderWorld);
+    // MediaPipe pose landmark indices
+    const shoulderIdx = (side === 'left') ? 11 : 12;
+    const elbowIdx = (side === 'left') ? 13 : 14;
+    const wristIdx = (side === 'left') ? 15 : 16;
 
-    // Use cached arm lengths from rest pose (avoids feedback loop)
-    const cached = this._armLengths[side];
-    const L1 = cached ? cached.L1 : 0.3;
-    const L2 = cached ? cached.L2 : 0.25;
+    // Check if we have the required pose landmarks
+    const hasPose = pose && pose[shoulderIdx] && pose[elbowIdx] && pose[wristIdx];
 
-    const toTarget = new THREE.Vector3().subVectors(target, shoulderWorld);
-    let d = toTarget.length();
-    if (d < 0.01) return;
-    d = Math.min(d, (L1 + L2) * 0.98); // clamp to reachable
-
-    // ─── Shoulder angle (angle at shoulder vertex of triangle) ─────
-    const cosA = (L1 * L1 + d * d - L2 * L2) / (2 * L1 * d);
-    const shoulderAngle = Math.acos(Math.max(-1, Math.min(1, cosA)));
-
-    // Arm axis direction (shoulder → target, normalized)
-    const armAxis = toTarget.clone().normalize();
-
-    // ─── Pole vector → bend direction ─────
-    const poleScale = (L1 + L2) * 0.35;
-    // If elbowHint provided, neutralize its z component — MediaPipe pose z
-    // for elbows is unreliable/exaggerated and overwhelms the pole direction,
-    // making the arm extend forward instead of hanging naturally.
-    // Keep x,y from the hint (reliable image-space positioning).
-    let pole;
-    if (elbowHint) {
-      pole = new THREE.Vector3(elbowHint.x, elbowHint.y, shoulderWorld.z);
-    } else {
-      // Default: below and to the side of the shoulder
-      // side sign: right arm elbow points right (-x), left arm elbow points left (+x)
-      pole = new THREE.Vector3(
-        shoulderWorld.x + (side === 'left' ? 1 : -1) * poleScale,
-        shoulderWorld.y - poleScale,
-        shoulderWorld.z
-      );
+    if (!hasPose) {
+      // Fallback: point upper arm at wrist target (old single-target approach)
+      if (wristLM) {
+        this._solveArmFallback(wristLM, side);
+      }
+      return;
     }
 
-    // Project pole onto plane perpendicular to arm axis
-    const poleVec = pole.clone().sub(shoulderWorld);
-    let bendDir = poleVec.clone().addScaledVector(armAxis, -poleVec.dot(armAxis));
-    if (bendDir.length() < 0.001) {
-      // Pole is on arm axis — fall back to "down" projected perpendicular
-      bendDir.set(0, -1, 0);
-      bendDir.addScaledVector(armAxis, -bendDir.dot(armAxis));
-      if (bendDir.length() < 0.001) bendDir.set(0, 0, -1); // arm points straight up/down
-    }
-    bendDir.normalize();
+    const pShoulder = pose[shoulderIdx];
+    const pElbow = pose[elbowIdx];
+    const pWrist = pose[wristIdx];
 
-    // ─── Upper arm: point from shoulder toward elbow ─────
-    // Elbow position = shoulder + L1 * (armAxis rotated by shoulderAngle toward pole)
-    const upperDir = armAxis.clone().multiplyScalar(Math.cos(shoulderAngle))
-      .addScaledVector(bendDir, Math.sin(shoulderAngle));
-    upperDir.normalize();
+    // Compute direction vectors in MediaPipe space, then transform to world space.
+    // MP space: x=left-to-right in image, y=top-to-bottom, z=into screen
+    // World space: x=stage-left(+) to stage-right(-), y=up(+), z=toward camera(+)
+    const xf = this._xFlip;
+    const zDamp = 0.3; // dampen Z (MP pose depth is noisy/exaggerated)
 
-    // Convert to parent-local space
-    const parentWorld = new THREE.Quaternion();
-    if (upperArm.parent) upperArm.parent.getWorldQuaternion(parentWorld);
-    const parentInv = parentWorld.clone().invert();
-    const localUpperDir = upperDir.clone().applyQuaternion(parentInv);
+    // ─── Upper arm direction: shoulder → elbow ─────
+    const upperDirWorld = new THREE.Vector3(
+      -(pElbow[0] - pShoulder[0]) * xf,
+      -(pElbow[1] - pShoulder[1]),
+      -((pElbow[2] ?? 0) - (pShoulder[2] ?? 0)) * zDamp
+    );
+    if (upperDirWorld.length() < 0.001) return;
+    upperDirWorld.normalize();
+
+    // ─── Forearm direction: elbow → wrist ─────
+    const foreDirWorld = new THREE.Vector3(
+      -(pWrist[0] - pElbow[0]) * xf,
+      -(pWrist[1] - pElbow[1]),
+      -((pWrist[2] ?? 0) - (pElbow[2] ?? 0)) * zDamp
+    );
+    if (foreDirWorld.length() < 0.001) return;
+    foreDirWorld.normalize();
+
+    // ─── Apply upper arm rotation ─────
+    // Convert world direction to upper arm's parent-local space
+    const parentWorldQ = new THREE.Quaternion();
+    if (upperArm.parent) upperArm.parent.getWorldQuaternion(parentWorldQ);
+    const parentInv = parentWorldQ.clone().invert();
+    const localUpperDir = upperDirWorld.clone().applyQuaternion(parentInv);
 
     const restDir = this._armRestDir[side]
       ? this._armRestDir[side].clone()
@@ -1299,48 +1294,83 @@ export class HumanoidAvatar {
     upperArm.quaternion.multiplyQuaternions(qUpper, restQ);
     this._filterBone(side + 'UpperArm', upperArm);
 
-    // ─── Forearm: point from elbow toward target ─────
+    // ─── Apply forearm rotation ─────
+    // Update matrices after upper arm rotation so forearm parent space is correct
     upperArm.updateWorldMatrix(true, true);
 
-    const elbowWorldPos = new THREE.Vector3();
-    foreArm.getWorldPosition(elbowWorldPos);
-
-    const foreWorldDir = target.clone().sub(elbowWorldPos);
-    if (foreWorldDir.length() < 0.001) return;
-    foreWorldDir.normalize();
-
-    // Convert to forearm's parent-local space (= upper arm's local space)
     const foreParentWorldQ = new THREE.Quaternion();
     foreArm.parent.getWorldQuaternion(foreParentWorldQ);
     const foreParentInv = foreParentWorldQ.clone().invert();
-    const localForeDir = foreWorldDir.clone().applyQuaternion(foreParentInv);
+    const localForeDir = foreDirWorld.clone().applyQuaternion(foreParentInv);
 
     const foreRestDir = this._forearmRestDir?.[side]?.clone()
-      || restDir.clone(); // fallback: same direction as upper arm
+      || restDir.clone();
     const foreRestQ = restForeQ || new THREE.Quaternion();
 
     const qFore = new THREE.Quaternion().setFromUnitVectors(foreRestDir, localForeDir);
     foreArm.quaternion.multiplyQuaternions(qFore, foreRestQ);
     this._filterBone(side + 'ForeArm', foreArm);
 
+    // ─── Diagnostic logging ─────
     if ((this._diagCount || 0) < 3) {
-      // Verify: where does the wrist actually end up?
       foreArm.updateWorldMatrix(true, true);
       const handBone = this.bones[side + 'Hand'];
       let actualWrist = new THREE.Vector3();
       if (handBone) { handBone.updateWorldMatrix(true, true); handBone.getWorldPosition(actualWrist); }
-      const wristError = actualWrist.distanceTo(target);
 
-      const shoulderAngleDeg = (shoulderAngle * 180 / Math.PI).toFixed(1);
       const _f = v => `(${v.x.toFixed(3)},${v.y.toFixed(3)},${v.z.toFixed(3)})`;
-      console.log(`[IK-2bone] ${side} shAngle=${shoulderAngleDeg}° d=${d.toFixed(3)} armAxis=${_f(armAxis)} bendDir=${_f(bendDir)} upperDir=${_f(upperDir)}`);
-      console.log(`[IK-2bone] ${side} pole=${_f(pole)} elbowHint=${elbowHint ? 'yes' : 'no'} poleVec=${_f(poleVec)}`);
-      console.log(`[IK-2bone] ${side} localUpperDir=${_f(localUpperDir)} restDir=${_f(restDir)} foreRestDir=${_f(foreRestDir)} localForeDir=${_f(localForeDir)}`);
-      console.log(`[IK-2bone] ${side} shoulder=${_f(shoulderWorld)} elbowPos=${_f(elbowWorldPos)} target=${_f(target)} actualWrist=${_f(actualWrist)} wristError=${wristError.toFixed(4)}`);
+      const _a = a => `[${a[0]?.toFixed(4)},${a[1]?.toFixed(4)},${(a[2]??0).toFixed(4)}]`;
+      console.log(`[DirectArm] ${side} shoulder=${_a(pShoulder)} elbow=${_a(pElbow)} wrist=${_a(pWrist)}`);
+      console.log(`[DirectArm] ${side} upperDirW=${_f(upperDirWorld)} foreDirW=${_f(foreDirWorld)} localUpper=${_f(localUpperDir)} localFore=${_f(localForeDir)}`);
+      console.log(`[DirectArm] ${side} restDir=${_f(restDir)} foreRestDir=${_f(foreRestDir)} actualWrist=${_f(actualWrist)}`);
     }
     } catch(e) {
-      console.error(`[IK-2bone ERROR] ${side}:`, e.message, e.stack);
+      console.error(`[DirectArm ERROR] ${side}:`, e.message, e.stack);
     }
+  }
+
+  // Fallback: simple arm pointing when pose landmarks are unavailable.
+  // Points upper arm toward wrist target, forearm follows.
+  _solveArmFallback(wristLM, side) {
+    const upperArm = this.bones[side + 'UpperArm'];
+    const foreArm = this.bones[side + 'ForeArm'];
+    if (!upperArm || !foreArm) return;
+
+    const target = this._lmToWorld(wristLM);
+    const shoulderWorld = new THREE.Vector3();
+    upperArm.getWorldPosition(shoulderWorld);
+
+    const toTarget = new THREE.Vector3().subVectors(target, shoulderWorld);
+    if (toTarget.length() < 0.01) return;
+    toTarget.normalize();
+
+    // Upper arm: point toward target
+    const parentWorldQ = new THREE.Quaternion();
+    if (upperArm.parent) upperArm.parent.getWorldQuaternion(parentWorldQ);
+    const parentInv = parentWorldQ.clone().invert();
+    const localDir = toTarget.clone().applyQuaternion(parentInv);
+
+    const restDir = this._armRestDir[side]?.clone()
+      || new THREE.Vector3(side === 'left' ? -1 : 1, 0, 0);
+    const restUpperQ = this._restPose[side + 'UpperArm'] || new THREE.Quaternion();
+
+    const qUpper = new THREE.Quaternion().setFromUnitVectors(restDir, localDir);
+    upperArm.quaternion.multiplyQuaternions(qUpper, restUpperQ);
+    this._filterBone(side + 'UpperArm', upperArm);
+
+    // Forearm: also point toward target
+    upperArm.updateWorldMatrix(true, true);
+    const foreParentWorldQ = new THREE.Quaternion();
+    foreArm.parent.getWorldQuaternion(foreParentWorldQ);
+    const foreParentInv = foreParentWorldQ.clone().invert();
+    const localForeDir = toTarget.clone().applyQuaternion(foreParentInv);
+
+    const foreRestDir = this._forearmRestDir?.[side]?.clone() || restDir.clone();
+    const restForeQ = this._restPose[side + 'ForeArm'] || new THREE.Quaternion();
+
+    const qFore = new THREE.Quaternion().setFromUnitVectors(foreRestDir, localForeDir);
+    foreArm.quaternion.multiplyQuaternions(qFore, restForeQ);
+    this._filterBone(side + 'ForeArm', foreArm);
   }
 
   // ─── Hand orientation from landmarks ──────────────────────
@@ -1631,7 +1661,7 @@ export class HumanoidAvatar {
       }
       if (rh) {
         const wristWorld = this._lmToWorld(rh[0]);
-        // Read actual bone position (same way _solveArmIK does)
+        // Read actual bone position
         const rUA = this.bones.rightUpperArm;
         if (rUA) {
           const restQ = this._restPose.rightUpperArm;
@@ -1661,15 +1691,13 @@ export class HumanoidAvatar {
     // ── End diagnostic ──
 
     if (rh && rh.length >= 21) {
-      const elbowR = pose?.[14] ? this._lmToWorld(pose[14]) : null;
-      this._solveArmIK(this._lmToWorld(rh[0]), 'right', elbowR);
+      this._solveArmDirect('right', pose, rh[0]);
       this._applyHandOrientation(rh, 'right');
       this._fingerPose(rh, 'right');
     } else this._armRest('right');
 
     if (lh && lh.length >= 21) {
-      const elbowL = pose?.[13] ? this._lmToWorld(pose[13]) : null;
-      this._solveArmIK(this._lmToWorld(lh[0]), 'left', elbowL);
+      this._solveArmDirect('left', pose, lh[0]);
       this._applyHandOrientation(lh, 'left');
       this._fingerPose(lh, 'left');
     } else this._armRest('left');
