@@ -1571,16 +1571,57 @@ export class HumanoidAvatar {
     // Anchor frame to signer's body proportions (before IK)
     this._updateFrameAnchor(pose);
 
+    // ── Diagnostic logging (first 3 frames only) ──
+    if (!this._diagCount) this._diagCount = 0;
+    if (this._diagCount < 3 && this._bodyCalib) {
+      const _fmt = (v) => v ? `(${v.x?.toFixed(3)??v[0]?.toFixed(3)}, ${v.y?.toFixed(3)??v[1]?.toFixed(3)}, ${v.z?.toFixed(3)??v[2]?.toFixed(3)})` : 'null';
+      const _fmtA = (a) => a ? `[${a[0]?.toFixed(4)}, ${a[1]?.toFixed(4)}, ${a[2]?.toFixed(4) ?? 'undef'}]` : 'null';
+      const c = this._bodyCalib;
+      console.log(`[DIAG frame ${this._diagCount}] xyScale=${c.xyScale.toFixed(3)} yOff=${c.yOffset.toFixed(3)} shCenter=${_fmt(c.shoulderCenter)}`);
+      if (pose) {
+        console.log(`[DIAG frame ${this._diagCount}] pose[11]=${_fmtA(pose[11])} pose[12]=${_fmtA(pose[12])}`);
+      }
+      if (rh) {
+        const wristWorld = this._lmToWorld(rh[0]);
+        // Read actual bone position (same way _solveArmIK does)
+        const rUA = this.bones.rightUpperArm;
+        if (rUA) {
+          const restQ = this._restPose.rightUpperArm;
+          if (restQ) rUA.quaternion.copy(restQ);
+          rUA.updateWorldMatrix(true, false);
+          const bonePos = new THREE.Vector3(); rUA.getWorldPosition(bonePos);
+          const toTarget = new THREE.Vector3().subVectors(wristWorld, bonePos);
+          const reach = this._armLengths.right ? this._armLengths.right.L1 + this._armLengths.right.L2 : 0;
+          console.log(`[DIAG frame ${this._diagCount}] R wristLM=${_fmtA(rh[0])} wristWorld=${_fmt(wristWorld)} boneShoulder=${_fmt(bonePos)} toTarget=${_fmt(toTarget)} dist=${toTarget.length().toFixed(3)} reach=${reach.toFixed(3)}`);
+        }
+      }
+      if (lh) {
+        const wristWorld = this._lmToWorld(lh[0]);
+        const lUA = this.bones.leftUpperArm;
+        if (lUA) {
+          const restQ = this._restPose.leftUpperArm;
+          if (restQ) lUA.quaternion.copy(restQ);
+          lUA.updateWorldMatrix(true, false);
+          const bonePos = new THREE.Vector3(); lUA.getWorldPosition(bonePos);
+          const toTarget = new THREE.Vector3().subVectors(wristWorld, bonePos);
+          const reach = this._armLengths.left ? this._armLengths.left.L1 + this._armLengths.left.L2 : 0;
+          console.log(`[DIAG frame ${this._diagCount}] L wristLM=${_fmtA(lh[0])} wristWorld=${_fmt(wristWorld)} boneShoulder=${_fmt(bonePos)} toTarget=${_fmt(toTarget)} dist=${toTarget.length().toFixed(3)} reach=${reach.toFixed(3)}`);
+        }
+      }
+      this._diagCount++;
+    }
+    // ── End diagnostic ──
+
     if (rh && rh.length >= 21) {
       const elbowR = pose?.[14] ? this._lmToWorld(pose[14]) : null;
-      this._solveArmIK(this._wristTarget(rh[0], 'right', pose), 'right', elbowR);
+      this._solveArmIK(this._lmToWorld(rh[0]), 'right', elbowR);
       this._applyHandOrientation(rh, 'right');
       this._fingerPose(rh, 'right');
     } else this._armRest('right');
 
     if (lh && lh.length >= 21) {
       const elbowL = pose?.[13] ? this._lmToWorld(pose[13]) : null;
-      this._solveArmIK(this._wristTarget(lh[0], 'left', pose), 'left', elbowL);
+      this._solveArmIK(this._lmToWorld(lh[0]), 'left', elbowL);
       this._applyHandOrientation(lh, 'left');
       this._fingerPose(lh, 'left');
     } else this._armRest('left');
