@@ -1221,7 +1221,7 @@ export class HumanoidAvatar {
     const foreArm = this.bones[side + 'ForeArm'];
     if (!upperArm || !foreArm) return;
 
-    // Reset to rest pose BEFORE computing world positions
+    try {    // Reset to rest pose BEFORE computing world positions
     const restUpperQ = this._restPose[side + 'UpperArm'];
     if (restUpperQ) upperArm.quaternion.copy(restUpperQ);
     const restForeQ = this._restPose[side + 'ForeArm'];
@@ -1326,6 +1326,9 @@ export class HumanoidAvatar {
       console.log(`[IK-2bone] ${side} pole=${_f(pole)} elbowHint=${elbowHint ? 'yes' : 'no'} poleVec=${_f(poleVec)}`);
       console.log(`[IK-2bone] ${side} localUpperDir=${_f(localUpperDir)} restDir=${_f(restDir)} foreRestDir=${_f(foreRestDir)} localForeDir=${_f(localForeDir)}`);
       console.log(`[IK-2bone] ${side} shoulder=${_f(shoulderWorld)} elbowPos=${_f(elbowWorldPos)} target=${_f(target)} actualWrist=${_f(actualWrist)} wristError=${wristError.toFixed(4)}`);
+    }
+    } catch(e) {
+      console.error(`[IK-2bone ERROR] ${side}:`, e.message, e.stack);
     }
   }
 
