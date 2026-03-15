@@ -1248,7 +1248,8 @@ export class HumanoidAvatar {
     // ─── Pole vector: twist upper arm so elbow points naturally ─────
     // Default pole target: behind and below the shoulder (proportional to arm length)
     const poleScale = (L1 + L2) * 0.35;
-    const pole = elbowHint || new THREE.Vector3(
+    // EXPERIMENT: ignore elbowHint to test if default pole fixes elbow direction
+    const pole = new THREE.Vector3(
       shoulderWorld.x + (side === 'left' ? -1 : 1) * poleScale * 0.3,
       shoulderWorld.y - poleScale,
       shoulderWorld.z - poleScale
@@ -1279,6 +1280,9 @@ export class HumanoidAvatar {
 
       // Apply twist in parent-local space around the arm direction
       if (Math.abs(twistAngle) > 0.01) {
+        if (this._debugFrame < 3) {
+          console.log(`[IK-pole] ${side} twistAngle=${(twistAngle*180/Math.PI).toFixed(1)}° pole=(${pole.x.toFixed(3)},${pole.y.toFixed(3)},${pole.z.toFixed(3)}) elbowPos=(${elbowPos.x.toFixed(3)},${elbowPos.y.toFixed(3)},${elbowPos.z.toFixed(3)})`);
+        }
         const twistQ = new THREE.Quaternion().setFromAxisAngle(localDir, twistAngle);
         upperArm.quaternion.premultiply(twistQ);
       }
