@@ -356,6 +356,10 @@ export class HumanoidAvatar {
     // Temporal smoothing — One-Euro filters per bone
     this._boneFilters = {};
 
+    // Proportional body calibration (populated at load time)
+    this._bodyCalib = null;
+    this._frameAnchor = null;
+
     // WBC
     this._yaw = 0;
     this._pitch = 0;
@@ -683,6 +687,7 @@ export class HumanoidAvatar {
     this._saveRestPose();
     this._cacheArmRestDirs();
     this._cacheHandRestAxes();
+    this._calibrateBodyProportions();
     this._initBoneFilters();
 
     // Determine X-flip: check which side the avatar's right shoulder is on
@@ -979,11 +984,152 @@ export class HumanoidAvatar {
     bone.quaternion.copy(filter.filter(bone.quaternion, t));
   }
 
+  // ─── Body proportional calibration ─────────────────────────
+  // Measures the avatar's actual body geometry so landmark-to-world
+  // transforms produce positions that are proportionally correct
+  // relative to the model's skeleton (shoulder width, arm reach,
+  // head height, etc.)
+
+  _calibrateBodyProportions() {
+    this.model.updateMatrixWorld(true);
+
+    const getPos = (bone) => {
+      if (!bone) return null;
+      const v = new THREE.Vector3();
+      bone.getWorldPosition(v);
+      return v;
+    };
+
+    const lShoulder = getPos(this.bones.leftShoulder || this.bones.leftUpperArm);
+    const rShoulder = getPos(this.bones.rightShoulder || this.bones.rightUpperArm);
+    const headPos = getPos(this.bones.head);
+    const hipsPos = getPos(this.bones.hips);
+    const neckPos = getPos(this.bones.neck);
+
+    // Shoulder width in world units
+    const shoulderWidth = (lShoulder && rShoulder)
+      ? lShoulder.distanceTo(rShoulder) : 0.4;
+
+    // Total arm reach (L1 + L2) averaged between sides
+    let totalArmReach = 0.55; // fallback
+    const sides = ['left', 'right'];
+    let armCount = 0;
+    for (const side of sides) {
+      const cached = this._armLengths[side];
+      if (cached) {
+        totalArmReach = (totalArmReach * armCount + cached.L1 + cached.L2) / (armCount + 1);
+        armCount++;
+      }
+    }
+
+    // Shoulder center in world space (the origin the IK targets are relative to)
+    const shoulderCenter = (lShoulder && rShoulder)
+      ? new THREE.Vector3().addVectors(lShoulder, rShoulder).multiplyScalar(0.5)
+      : new THREE.Vector3(0, 1.3, 0);
+
+    // Head center for face-to-hand calibration
+    const headCenter = headPos || new THREE.Vector3(0, 1.6, 0);
+
+    // Vertical span: head-to-hips gives us the torso proportion
+    const torsoHeight = (headPos && hipsPos) ? headPos.y - hipsPos.y : 0.8;
+
+    // The signing space in MediaPipe normalized coords roughly spans:
+    //   - Horizontally: ~0.15 to ~0.85 (shoulder to opposite reach) ≈ 0.7 of image
+    //   - Vertically: ~0.1 (above head) to ~0.8 (below waist) ≈ 0.7 of image
+    // The avatar's signing space should map to: shoulder width + 2 * arm reach
+    // But hands typically reach ~1 arm length from center, so effective
+    // horizontal span = shoulderWidth + totalArmReach (one side at a time)
+    //
+    // MediaPipe coordinate 0.5 is image center → world 0
+    // A hand at x=0.15 or x=0.85 is at ±0.35 from center in MP space
+    // That should map to ±(shoulderWidth/2 + totalArmReach) in world space
+    const maxHorizReach = shoulderWidth / 2 + totalArmReach;
+    // Scale: 0.35 in MP → maxHorizReach in world
+    const xyScale = maxHorizReach / 0.35;
+
+    // Vertical: the signing space center in MP is roughly y≈0.45 (just above waist)
+    // which should map to the shoulder center height
+    const yOffset = shoulderCenter.y;
+
+    // Z scale: MediaPipe z is relative depth (positive = toward camera).
+    // Preserve the XY:Z proportion so depth is not artificially compressed.
+    // The raw MediaPipe z range is roughly ±0.1 for hand landmarks relative to wrist,
+    // and ±0.2 for pose landmarks. Use the same scale as XY but dampen slightly
+    // because MP depth is less reliable than XY.
+    const zScale = xyScale * 0.3;
+
+    this._bodyCalib = {
+      xyScale,
+      yOffset,
+      zScale,
+      shoulderWidth,
+      totalArmReach,
+      shoulderCenter: shoulderCenter.clone(),
+      headCenter: headCenter.clone(),
+      torsoHeight,
+    };
+
+    console.log(`[Avatar] Body calibration: xyScale=${xyScale.toFixed(3)}, yOffset=${yOffset.toFixed(3)}, zScale=${zScale.toFixed(3)}, shoulderW=${shoulderWidth.toFixed(3)}, armReach=${totalArmReach.toFixed(3)}`);
+  }
+
   // ─── Arm IK with pole vector ───────────────────────────────
+
+  // Per-frame anchor: when pose data is available, compute the offset
+  // that maps the signer's shoulder center to the avatar's shoulder center.
+  // This corrects for different signer body positions within the camera frame.
+  _updateFrameAnchor(pose) {
+    const c = this._bodyCalib;
+    if (!c) { this._frameAnchor = null; return; }
+
+    // MediaPipe pose: 11=left shoulder, 12=right shoulder, 0=nose
+    if (pose && pose[11] && pose[12]) {
+      const lsx = pose[11][0], lsy = pose[11][1];
+      const rsx = pose[12][0], rsy = pose[12][1];
+      // Signer's shoulder center in MP normalized coords
+      const signerCenterX = (lsx + rsx) / 2;
+      const signerCenterY = (lsy + rsy) / 2;
+      // Signer's shoulder width in MP coords
+      const signerShoulderW = Math.abs(lsx - rsx);
+
+      // Dynamic scale: fit signer's shoulder width to avatar's shoulder width
+      // signerShoulderW (in MP space) should map to avatar's shoulderWidth (in world)
+      // Scale factor: avatarShoulderWidth / (signerShoulderW * xyScale)
+      // But we also need to preserve arm reach proportions, so use a blend:
+      // the ratio of actual-to-expected shoulder width adjusts the xyScale
+      const expectedSigW = c.shoulderWidth / c.xyScale; // expected signer shoulder width in MP space
+      const scaleAdj = signerShoulderW > 0.02
+        ? Math.max(0.7, Math.min(1.4, signerShoulderW / expectedSigW))
+        : 1.0;
+
+      this._frameAnchor = {
+        centerX: signerCenterX,
+        centerY: signerCenterY,
+        scaleAdj,
+      };
+    } else {
+      this._frameAnchor = null;
+    }
+  }
 
   _lmToWorld(lm) {
     // MediaPipe x: 0=left of image, 1=right of image (selfie/mirrored)
     // (0.5 - x) centers it, then _xFlip aligns with avatar's actual shoulder side
+    // Use model-calibrated scaling for proportionally correct positioning
+    const c = this._bodyCalib;
+    if (c) {
+      const anchor = this._frameAnchor;
+      // Center relative to signer's actual shoulder center (if available)
+      const cx = anchor ? anchor.centerX : 0.5;
+      const cy = anchor ? anchor.centerY : 0.5;
+      const sa = anchor ? anchor.scaleAdj : 1.0;
+      const scale = c.xyScale * sa;
+      return new THREE.Vector3(
+        (cx - lm[0]) * scale * this._xFlip,
+        (cy - lm[1]) * scale + c.yOffset,
+        -(lm[2] ?? 0) * c.zScale * sa
+      );
+    }
+    // Fallback (before calibration)
     return new THREE.Vector3(
       (0.5 - lm[0]) * 1.6 * this._xFlip,
       (0.5 - lm[1]) * 1.6 + 1.0,
@@ -1038,11 +1184,12 @@ export class HumanoidAvatar {
     upperArm.quaternion.multiplyQuaternions(q, restQ);
 
     // ─── Pole vector: twist upper arm so elbow points naturally ─────
-    // Default pole target: behind and below the shoulder
+    // Default pole target: behind and below the shoulder (proportional to arm length)
+    const poleScale = (L1 + L2) * 0.35;
     const pole = elbowHint || new THREE.Vector3(
-      shoulderWorld.x + (side === 'left' ? -0.1 : 0.1),
-      shoulderWorld.y - 0.3,
-      shoulderWorld.z - 0.3
+      shoulderWorld.x + (side === 'left' ? -1 : 1) * poleScale * 0.3,
+      shoulderWorld.y - poleScale,
+      shoulderWorld.z - poleScale
     );
 
     // Update world matrices to get current elbow position after direction set
@@ -1108,19 +1255,20 @@ export class HumanoidAvatar {
     const w = handLM[0], imcp = handLM[5], mmcp = handLM[9], pmcp = handLM[17];
 
     // Direction transform: MP image space → world space
-    // In _lmToWorld the offsets cancel for directions; scale normalizes out
-    // dx_world = -dx * xFlip, dy_world = -dy, dz_world = -dz
+    // XY uses xyScale, Z uses zScale — preserve the ratio so depth directions are correct
     const xf = this._xFlip;
+    const c = this._bodyCalib;
+    const zRatio = c ? (c.zScale / c.xyScale) : 0.25; // Z-to-XY proportion
     const fingerDir = new THREE.Vector3(
       -(mmcp[0] - w[0]) * xf,
       -(mmcp[1] - w[1]),
-      -((mmcp[2] ?? 0) - (w[2] ?? 0))
+      -((mmcp[2] ?? 0) - (w[2] ?? 0)) * zRatio
     ).normalize();
 
     const palmWidth = new THREE.Vector3(
       -(pmcp[0] - imcp[0]) * xf,
       -(pmcp[1] - imcp[1]),
-      -((pmcp[2] ?? 0) - (imcp[2] ?? 0))
+      -((pmcp[2] ?? 0) - (imcp[2] ?? 0)) * zRatio
     ).normalize();
 
     // Palm normal via cross product; flip for left hand chirality
@@ -1358,6 +1506,9 @@ export class HumanoidAvatar {
       rh = frame;
     }
 
+    // Anchor frame to signer's body proportions (before IK)
+    this._updateFrameAnchor(pose);
+
     if (rh && rh.length >= 21) {
       const elbowR = pose?.[14] ? this._lmToWorld(pose[14]) : null;
       this._solveArmIK(this._lmToWorld(rh[0]), 'right', elbowR);
@@ -1451,6 +1602,10 @@ export class HumanoidAvatar {
       }
       if (this._armLengths?.right) {
         lines.push(`R arm lengths: L1=${this._armLengths.right.L1.toFixed(3)} L2=${this._armLengths.right.L2.toFixed(3)}`);
+      }
+      if (this._bodyCalib) {
+        const bc = this._bodyCalib;
+        lines.push(`Calibration: xy=${bc.xyScale.toFixed(2)} z=${bc.zScale.toFixed(2)} shW=${bc.shoulderWidth.toFixed(3)} reach=${bc.totalArmReach.toFixed(3)}`);
       }
       dbgEl.textContent = lines.join('\n');
     }
