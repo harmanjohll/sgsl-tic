@@ -1000,15 +1000,15 @@ export class HumanoidAvatar {
       return v;
     };
 
-    const lShoulder = getPos(this.bones.leftShoulder || this.bones.leftUpperArm);
-    const rShoulder = getPos(this.bones.rightShoulder || this.bones.rightUpperArm);
+    const lShoulder = getPos(this.bones.leftUpperArm || this.bones.leftShoulder);
+    const rShoulder = getPos(this.bones.rightUpperArm || this.bones.rightShoulder);
     const headPos = getPos(this.bones.head);
     const hipsPos = getPos(this.bones.hips);
     const neckPos = getPos(this.bones.neck);
 
-    // Shoulder width in world units
-    const shoulderWidth = (lShoulder && rShoulder)
-      ? lShoulder.distanceTo(rShoulder) : 0.4;
+    // Shoulder width in world units (minimum 0.15 to guard against degenerate rigs)
+    const shoulderWidth = Math.max(0.15,
+      (lShoulder && rShoulder) ? lShoulder.distanceTo(rShoulder) : 0.4);
 
     // Total arm reach (L1 + L2) averaged between sides
     let totalArmReach = 0.55; // fallback
@@ -1135,6 +1135,68 @@ export class HumanoidAvatar {
       (0.5 - lm[1]) * 1.6 + 1.0,
       -(lm[2] ?? 0) * 0.4
     );
+  }
+
+  // Compute wrist IK target relative to the avatar's actual shoulder position.
+  // Instead of mapping to an absolute world position (which drifts from the bone),
+  // we compute the wrist offset relative to the signer's shoulder in MP space,
+  // scale it to the avatar's proportions, and add it to the avatar's shoulder.
+  _wristTarget(wristLM, side, pose) {
+    const c = this._bodyCalib;
+    const cached = this._armLengths[side];
+    if (!c || !cached) return this._lmToWorld(wristLM); // fallback before calibration
+
+    // Avatar's shoulder position from calibration data
+    const halfSW = c.shoulderWidth / 2;
+    const shoulderWorld = c.shoulderCenter.clone();
+    // leftUpperArm is at +x in avatar space (stage-left), right at -x
+    shoulderWorld.x += (side === 'left' ? 1 : -1) * halfSW;
+
+    // Signer's shoulder from pose landmarks (11=left, 12=right in MP)
+    const sigIdx = (side === 'left') ? 11 : 12;
+    let sigShoulder;
+    if (pose && pose[sigIdx]) {
+      sigShoulder = pose[sigIdx];
+    } else {
+      // Fallback: estimate from frame anchor or defaults
+      const anchor = this._frameAnchor;
+      const cx = anchor ? anchor.centerX : 0.5;
+      const cy = anchor ? anchor.centerY : 0.45;
+      const typicalHalfSW = 0.12;
+      sigShoulder = [
+        cx + (side === 'left' ? typicalHalfSW : -typicalHalfSW) * this._xFlip,
+        cy,
+        0
+      ];
+    }
+
+    // Relative offset: signer's shoulder → wrist in MP space
+    const dx = wristLM[0] - sigShoulder[0];
+    const dy = wristLM[1] - sigShoulder[1];
+    const dz = (wristLM[2] ?? 0) - (sigShoulder[2] ?? 0);
+
+    // Scale factor: avatar shoulder width / signer shoulder width in MP space
+    let signerSW = 0.24; // typical default
+    if (pose && pose[11] && pose[12]) {
+      signerSW = Math.max(0.08, Math.abs(pose[11][0] - pose[12][0]));
+    }
+    const scale = c.shoulderWidth / signerSW;
+
+    // Map to avatar space with coordinate transforms
+    const offset = new THREE.Vector3(
+      -dx * scale * this._xFlip,  // mirror X for selfie view
+      -dy * scale,                 // invert Y (MP y goes down)
+      -dz * scale * 0.3            // dampen Z (MP depth is noisy)
+    );
+
+    // Clamp to 95% of arm reach to prevent T-pose / full extension
+    const maxReach = cached.L1 + cached.L2;
+    const offsetLen = offset.length();
+    if (offsetLen > maxReach * 0.95) {
+      offset.multiplyScalar((maxReach * 0.95) / offsetLen);
+    }
+
+    return shoulderWorld.add(offset);
   }
 
   _solveArmIK(target, side, elbowHint = null) {
@@ -1511,14 +1573,14 @@ export class HumanoidAvatar {
 
     if (rh && rh.length >= 21) {
       const elbowR = pose?.[14] ? this._lmToWorld(pose[14]) : null;
-      this._solveArmIK(this._lmToWorld(rh[0]), 'right', elbowR);
+      this._solveArmIK(this._wristTarget(rh[0], 'right', pose), 'right', elbowR);
       this._applyHandOrientation(rh, 'right');
       this._fingerPose(rh, 'right');
     } else this._armRest('right');
 
     if (lh && lh.length >= 21) {
       const elbowL = pose?.[13] ? this._lmToWorld(pose[13]) : null;
-      this._solveArmIK(this._lmToWorld(lh[0]), 'left', elbowL);
+      this._solveArmIK(this._wristTarget(lh[0], 'left', pose), 'left', elbowL);
       this._applyHandOrientation(lh, 'left');
       this._fingerPose(lh, 'left');
     } else this._armRest('left');
