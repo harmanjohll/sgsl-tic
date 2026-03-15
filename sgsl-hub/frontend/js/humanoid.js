@@ -1246,42 +1246,57 @@ export class HumanoidAvatar {
     upperArm.quaternion.multiplyQuaternions(q, restQ);
 
     // ─── Pole vector: twist upper arm so elbow points naturally ─────
+    // First, apply forearm bend so we can measure the off-axis hand position
+    // (Before bend, the forearm origin is ON the arm axis → projection = 0 → twist never fires)
+    if (foreArm) {
+      foreArm.quaternion.copy(this._restPose[side + 'ForeArm'] || new THREE.Quaternion());
+      foreArm.rotateX(elbowAngle);
+    }
+
     // Default pole target: behind and below the shoulder (proportional to arm length)
     const poleScale = (L1 + L2) * 0.35;
-    // EXPERIMENT: ignore elbowHint to test if default pole fixes elbow direction
-    const pole = new THREE.Vector3(
+    const pole = elbowHint || new THREE.Vector3(
       shoulderWorld.x + (side === 'left' ? -1 : 1) * poleScale * 0.3,
       shoulderWorld.y - poleScale,
       shoulderWorld.z - poleScale
     );
 
-    // Update world matrices to get current elbow position after direction set
+    // Update world matrices after direction set + forearm bend
     upperArm.updateWorldMatrix(true, true);
-    const elbowPos = new THREE.Vector3();
-    foreArm.getWorldPosition(elbowPos);
 
-    // Project pole and elbow onto the plane perpendicular to shoulder→target
+    // Get the hand bone position (off-axis after bend) to determine current bend plane
+    const handBone = this.bones[side + 'Hand'];
+    let bendRefPos = new THREE.Vector3();
+    if (handBone) {
+      handBone.updateWorldMatrix(true, true);
+      handBone.getWorldPosition(bendRefPos);
+    } else {
+      foreArm.getWorldPosition(bendRefPos);
+    }
+
+    // Project pole and hand onto the plane perpendicular to shoulder→target
     const axis = toTarget.clone().normalize();
-    const elbowVec = elbowPos.clone().sub(shoulderWorld);
+    const bendRefVec = bendRefPos.clone().sub(shoulderWorld);
     const poleVec = pole.clone().sub(shoulderWorld);
 
     // Remove component along the arm axis
-    const elbowProj = elbowVec.clone().addScaledVector(axis, -elbowVec.dot(axis));
+    // Hand off-axis direction is OPPOSITE to elbow "out" direction, so negate
+    const currentBendProj = bendRefVec.clone().addScaledVector(axis, -bendRefVec.dot(axis)).negate();
     const poleProj = poleVec.clone().addScaledVector(axis, -poleVec.dot(axis));
 
-    if (elbowProj.length() > 0.001 && poleProj.length() > 0.001) {
-      elbowProj.normalize();
+    if (currentBendProj.length() > 0.001 && poleProj.length() > 0.001) {
+      currentBendProj.normalize();
       poleProj.normalize();
 
-      let twistAngle = Math.acos(Math.max(-1, Math.min(1, elbowProj.dot(poleProj))));
+      let twistAngle = Math.acos(Math.max(-1, Math.min(1, currentBendProj.dot(poleProj))));
       // Determine sign via cross product
-      const cross = new THREE.Vector3().crossVectors(elbowProj, poleProj);
+      const cross = new THREE.Vector3().crossVectors(currentBendProj, poleProj);
       if (cross.dot(axis) < 0) twistAngle = -twistAngle;
 
       // Apply twist in parent-local space around the arm direction
       if (Math.abs(twistAngle) > 0.01) {
         if (this._debugFrame < 3) {
-          console.log(`[IK-pole] ${side} twistAngle=${(twistAngle*180/Math.PI).toFixed(1)}° pole=(${pole.x.toFixed(3)},${pole.y.toFixed(3)},${pole.z.toFixed(3)}) elbowPos=(${elbowPos.x.toFixed(3)},${elbowPos.y.toFixed(3)},${elbowPos.z.toFixed(3)})`);
+          console.log(`[IK-pole] ${side} twistAngle=${(twistAngle*180/Math.PI).toFixed(1)}° pole=(${pole.x.toFixed(3)},${pole.y.toFixed(3)},${pole.z.toFixed(3)}) handRef=(${bendRefPos.x.toFixed(3)},${bendRefPos.y.toFixed(3)},${bendRefPos.z.toFixed(3)})`);
         }
         const twistQ = new THREE.Quaternion().setFromAxisAngle(localDir, twistAngle);
         upperArm.quaternion.premultiply(twistQ);
@@ -1291,10 +1306,8 @@ export class HumanoidAvatar {
     // Apply temporal filtering to upper arm
     this._filterBone(side + 'UpperArm', upperArm);
 
-    // Elbow bend
+    // Forearm bend already applied above; just filter
     if (foreArm) {
-      foreArm.quaternion.copy(this._restPose[side + 'ForeArm'] || new THREE.Quaternion());
-      foreArm.rotateX(elbowAngle);
       this._filterBone(side + 'ForeArm', foreArm);
     }
   }
