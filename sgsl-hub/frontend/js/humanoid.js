@@ -853,6 +853,7 @@ export class HumanoidAvatar {
   // Cache arm rest directions at load time (before any animation modifies bones)
   _cacheArmRestDirs() {
     this._armRestDir = {};
+    this._forearmRestDir = {};
     this._armLengths = {};
 
     // Ensure world matrices are up to date after model transforms
@@ -890,6 +891,18 @@ export class HumanoidAvatar {
       } else {
         // Fallback: assume arms point sideways (T-pose)
         this._armRestDir[side] = new THREE.Vector3(side === 'left' ? -1 : 1, 0, 0);
+      }
+
+      // Cache forearm rest direction in its parent-local space (upper arm local)
+      const foreParentQ = new THREE.Quaternion();
+      if (foreArm.parent) foreArm.parent.getWorldQuaternion(foreParentQ);
+      const foreParentInv = foreParentQ.clone().invert();
+
+      const foreWorld = wPos.clone().sub(ePos);
+      if (foreWorld.length() > 0.01) {
+        this._forearmRestDir[side] = foreWorld.normalize().applyQuaternion(foreParentInv);
+      } else {
+        this._forearmRestDir[side] = this._armRestDir[side].clone();
       }
 
     }
@@ -1202,13 +1215,14 @@ export class HumanoidAvatar {
   _solveArmIK(target, side, elbowHint = null) {
     const upperArm = this.bones[side + 'UpperArm'];
     const foreArm = this.bones[side + 'ForeArm'];
-    const hand = this.bones[side + 'Hand'];
     if (!upperArm || !foreArm) return;
 
-    // Reset upper arm to rest pose BEFORE computing world positions
+    // Reset to rest pose BEFORE computing world positions
     const restUpperQ = this._restPose[side + 'UpperArm'];
     if (restUpperQ) upperArm.quaternion.copy(restUpperQ);
-    upperArm.updateWorldMatrix(true, false);
+    const restForeQ = this._restPose[side + 'ForeArm'];
+    if (restForeQ) foreArm.quaternion.copy(restForeQ);
+    upperArm.updateWorldMatrix(true, true);
 
     const shoulderWorld = new THREE.Vector3();
     upperArm.getWorldPosition(shoulderWorld);
@@ -1219,41 +1233,18 @@ export class HumanoidAvatar {
     const L2 = cached ? cached.L2 : 0.25;
 
     const toTarget = new THREE.Vector3().subVectors(target, shoulderWorld);
-    const d = Math.min(toTarget.length(), L1 + L2 - 0.01);
+    let d = toTarget.length();
     if (d < 0.01) return;
+    d = Math.min(d, (L1 + L2) * 0.98); // clamp to reachable
 
-    // Law of cosines for elbow angle
-    let cosElbow = (L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2);
-    cosElbow = Math.max(-1, Math.min(1, cosElbow));
-    const elbowAngle = Math.PI - Math.acos(cosElbow);
+    // ─── Shoulder angle (angle at shoulder vertex of triangle) ─────
+    const cosA = (L1 * L1 + d * d - L2 * L2) / (2 * L1 * d);
+    const shoulderAngle = Math.acos(Math.max(-1, Math.min(1, cosA)));
 
-    // Parent space transform
-    const parentWorld = new THREE.Quaternion();
-    if (upperArm.parent) upperArm.parent.getWorldQuaternion(parentWorld);
-    const parentInv = parentWorld.clone().invert();
+    // Arm axis direction (shoulder → target, normalized)
+    const armAxis = toTarget.clone().normalize();
 
-    const dir = toTarget.normalize();
-    const localDir = dir.clone().applyQuaternion(parentInv);
-
-    // Use cached rest direction (computed once at model load, avoids feedback loop)
-    const restDir = this._armRestDir[side]
-      ? this._armRestDir[side].clone()
-      : new THREE.Vector3(side === 'left' ? -1 : 1, 0, 0);
-
-    // Compose delta rotation with rest quaternion (q * restQ)
-    const q = new THREE.Quaternion().setFromUnitVectors(restDir, localDir);
-    const restQ = restUpperQ || new THREE.Quaternion();
-    upperArm.quaternion.multiplyQuaternions(q, restQ);
-
-    // ─── Pole vector: twist upper arm so elbow points naturally ─────
-    // First, apply forearm bend so we can measure the off-axis hand position
-    // (Before bend, the forearm origin is ON the arm axis → projection = 0 → twist never fires)
-    if (foreArm) {
-      foreArm.quaternion.copy(this._restPose[side + 'ForeArm'] || new THREE.Quaternion());
-      foreArm.rotateX(elbowAngle);
-    }
-
-    // Default pole target: behind and below the shoulder (proportional to arm length)
+    // ─── Pole vector → bend direction ─────
     const poleScale = (L1 + L2) * 0.35;
     const pole = elbowHint || new THREE.Vector3(
       shoulderWorld.x + (side === 'left' ? -1 : 1) * poleScale * 0.3,
@@ -1261,54 +1252,65 @@ export class HumanoidAvatar {
       shoulderWorld.z - poleScale
     );
 
-    // Update world matrices after direction set + forearm bend
-    upperArm.updateWorldMatrix(true, true);
-
-    // Get the hand bone position (off-axis after bend) to determine current bend plane
-    const handBone = this.bones[side + 'Hand'];
-    let bendRefPos = new THREE.Vector3();
-    if (handBone) {
-      handBone.updateWorldMatrix(true, true);
-      handBone.getWorldPosition(bendRefPos);
-    } else {
-      foreArm.getWorldPosition(bendRefPos);
-    }
-
-    // Project pole and hand onto the plane perpendicular to shoulder→target
-    const axis = toTarget.clone().normalize();
-    const bendRefVec = bendRefPos.clone().sub(shoulderWorld);
+    // Project pole onto plane perpendicular to arm axis
     const poleVec = pole.clone().sub(shoulderWorld);
-
-    // Remove component along the arm axis
-    // Hand off-axis direction is OPPOSITE to elbow "out" direction, so negate
-    const currentBendProj = bendRefVec.clone().addScaledVector(axis, -bendRefVec.dot(axis)).negate();
-    const poleProj = poleVec.clone().addScaledVector(axis, -poleVec.dot(axis));
-
-    if (currentBendProj.length() > 0.001 && poleProj.length() > 0.001) {
-      currentBendProj.normalize();
-      poleProj.normalize();
-
-      let twistAngle = Math.acos(Math.max(-1, Math.min(1, currentBendProj.dot(poleProj))));
-      // Determine sign via cross product
-      const cross = new THREE.Vector3().crossVectors(currentBendProj, poleProj);
-      if (cross.dot(axis) < 0) twistAngle = -twistAngle;
-
-      // Apply twist in parent-local space around the arm direction
-      if (Math.abs(twistAngle) > 0.01) {
-        if (this._debugFrame < 3) {
-          console.log(`[IK-pole] ${side} twistAngle=${(twistAngle*180/Math.PI).toFixed(1)}° pole=(${pole.x.toFixed(3)},${pole.y.toFixed(3)},${pole.z.toFixed(3)}) handRef=(${bendRefPos.x.toFixed(3)},${bendRefPos.y.toFixed(3)},${bendRefPos.z.toFixed(3)})`);
-        }
-        const twistQ = new THREE.Quaternion().setFromAxisAngle(localDir, twistAngle);
-        upperArm.quaternion.premultiply(twistQ);
-      }
+    let bendDir = poleVec.clone().addScaledVector(armAxis, -poleVec.dot(armAxis));
+    if (bendDir.length() < 0.001) {
+      // Pole is on arm axis — fall back to "down" projected perpendicular
+      bendDir.set(0, -1, 0);
+      bendDir.addScaledVector(armAxis, -bendDir.dot(armAxis));
+      if (bendDir.length() < 0.001) bendDir.set(0, 0, -1); // arm points straight up/down
     }
+    bendDir.normalize();
 
-    // Apply temporal filtering to upper arm
+    // ─── Upper arm: point from shoulder toward elbow ─────
+    // Elbow position = shoulder + L1 * (armAxis rotated by shoulderAngle toward pole)
+    const upperDir = armAxis.clone().multiplyScalar(Math.cos(shoulderAngle))
+      .addScaledVector(bendDir, Math.sin(shoulderAngle));
+    upperDir.normalize();
+
+    // Convert to parent-local space
+    const parentWorld = new THREE.Quaternion();
+    if (upperArm.parent) upperArm.parent.getWorldQuaternion(parentWorld);
+    const parentInv = parentWorld.clone().invert();
+    const localUpperDir = upperDir.clone().applyQuaternion(parentInv);
+
+    const restDir = this._armRestDir[side]
+      ? this._armRestDir[side].clone()
+      : new THREE.Vector3(side === 'left' ? -1 : 1, 0, 0);
+    const restQ = restUpperQ || new THREE.Quaternion();
+
+    const qUpper = new THREE.Quaternion().setFromUnitVectors(restDir, localUpperDir);
+    upperArm.quaternion.multiplyQuaternions(qUpper, restQ);
     this._filterBone(side + 'UpperArm', upperArm);
 
-    // Forearm bend already applied above; just filter
-    if (foreArm) {
-      this._filterBone(side + 'ForeArm', foreArm);
+    // ─── Forearm: point from elbow toward target ─────
+    upperArm.updateWorldMatrix(true, true);
+
+    const elbowWorldPos = new THREE.Vector3();
+    foreArm.getWorldPosition(elbowWorldPos);
+
+    const foreWorldDir = target.clone().sub(elbowWorldPos);
+    if (foreWorldDir.length() < 0.001) return;
+    foreWorldDir.normalize();
+
+    // Convert to forearm's parent-local space (= upper arm's local space)
+    const foreParentWorldQ = new THREE.Quaternion();
+    foreArm.parent.getWorldQuaternion(foreParentWorldQ);
+    const foreParentInv = foreParentWorldQ.clone().invert();
+    const localForeDir = foreWorldDir.clone().applyQuaternion(foreParentInv);
+
+    const foreRestDir = this._forearmRestDir?.[side]?.clone()
+      || restDir.clone(); // fallback: same direction as upper arm
+    const foreRestQ = restForeQ || new THREE.Quaternion();
+
+    const qFore = new THREE.Quaternion().setFromUnitVectors(foreRestDir, localForeDir);
+    foreArm.quaternion.multiplyQuaternions(qFore, foreRestQ);
+    this._filterBone(side + 'ForeArm', foreArm);
+
+    if (this._debugFrame < 3) {
+      const elbowAngleDeg = (Math.acos(cosA) * 180 / Math.PI).toFixed(1);
+      console.log(`[IK-2bone] ${side} shoulderAngle=${elbowAngleDeg}° d=${d.toFixed(3)} bendDir=(${bendDir.x.toFixed(2)},${bendDir.y.toFixed(2)},${bendDir.z.toFixed(2)}) pole=(${pole.x.toFixed(3)},${pole.y.toFixed(3)},${pole.z.toFixed(3)})`);
     }
   }
 
