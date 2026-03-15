@@ -1312,7 +1312,7 @@ export class HumanoidAvatar {
     foreArm.quaternion.multiplyQuaternions(qFore, foreRestQ);
     this._filterBone(side + 'ForeArm', foreArm);
 
-    if (this._debugFrame < 3) {
+    if ((this._diagCount || 0) < 3) {
       // Verify: where does the wrist actually end up?
       foreArm.updateWorldMatrix(true, true);
       const handBone = this.bones[side + 'Hand'];
