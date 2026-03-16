@@ -905,9 +905,11 @@ export class HumanoidAvatar {
         this._forearmRestDir[side] = this._armRestDir[side].clone();
       }
 
-      const frd = this._forearmRestDir[side];
-      const ard = this._armRestDir[side];
-      console.log(`[Cache] ${side} armRestDir=(${ard.x.toFixed(2)},${ard.y.toFixed(2)},${ard.z.toFixed(2)}) forearmRestDir=(${frd.x.toFixed(2)},${frd.y.toFixed(2)},${frd.z.toFixed(2)}) L1=${this._armLengths[side].L1.toFixed(3)} L2=${this._armLengths[side].L2.toFixed(3)} foreParent=${foreArm.parent?.name}`);
+      if (this._debug) {
+        const frd = this._forearmRestDir[side];
+        const ard = this._armRestDir[side];
+        console.log(`[Cache] ${side} armRestDir=(${ard.x.toFixed(2)},${ard.y.toFixed(2)},${ard.z.toFixed(2)}) forearmRestDir=(${frd.x.toFixed(2)},${frd.y.toFixed(2)},${frd.z.toFixed(2)}) L1=${this._armLengths[side].L1.toFixed(3)} L2=${this._armLengths[side].L2.toFixed(3)} foreParent=${foreArm.parent?.name}`);
+      }
 
     }
   }
@@ -1089,7 +1091,7 @@ export class HumanoidAvatar {
     console.log(`[Avatar] Body calibration: xyScale=${xyScale.toFixed(3)}, yOffset=${yOffset.toFixed(3)}, zScale=${zScale.toFixed(3)}, shoulderW=${shoulderWidth.toFixed(3)}, armReach=${totalArmReach.toFixed(3)}`);
   }
 
-  // ─── Arm IK with pole vector ───────────────────────────────
+  // ─── Arm pose from landmarks ────────────────────────────────
 
   // Per-frame anchor: when pose data is available, compute the offset
   // that maps the signer's shoulder center to the avatar's shoulder center.
@@ -1152,68 +1154,6 @@ export class HumanoidAvatar {
       (0.5 - lm[1]) * 1.6 + 1.0,
       -(lm[2] ?? 0) * 0.4
     );
-  }
-
-  // Compute wrist IK target relative to the avatar's actual shoulder position.
-  // Instead of mapping to an absolute world position (which drifts from the bone),
-  // we compute the wrist offset relative to the signer's shoulder in MP space,
-  // scale it to the avatar's proportions, and add it to the avatar's shoulder.
-  _wristTarget(wristLM, side, pose) {
-    const c = this._bodyCalib;
-    const cached = this._armLengths[side];
-    if (!c || !cached) return this._lmToWorld(wristLM); // fallback before calibration
-
-    // Avatar's shoulder position from calibration data
-    const halfSW = c.shoulderWidth / 2;
-    const shoulderWorld = c.shoulderCenter.clone();
-    // leftUpperArm is at +x in avatar space (stage-left), right at -x
-    shoulderWorld.x += (side === 'left' ? 1 : -1) * halfSW;
-
-    // Signer's shoulder from pose landmarks (11=left, 12=right in MP)
-    const sigIdx = (side === 'left') ? 11 : 12;
-    let sigShoulder;
-    if (pose && pose[sigIdx]) {
-      sigShoulder = pose[sigIdx];
-    } else {
-      // Fallback: estimate from frame anchor or defaults
-      const anchor = this._frameAnchor;
-      const cx = anchor ? anchor.centerX : 0.5;
-      const cy = anchor ? anchor.centerY : 0.45;
-      const typicalHalfSW = 0.12;
-      sigShoulder = [
-        cx + (side === 'left' ? typicalHalfSW : -typicalHalfSW) * this._xFlip,
-        cy,
-        0
-      ];
-    }
-
-    // Relative offset: signer's shoulder → wrist in MP space
-    const dx = wristLM[0] - sigShoulder[0];
-    const dy = wristLM[1] - sigShoulder[1];
-    const dz = (wristLM[2] ?? 0) - (sigShoulder[2] ?? 0);
-
-    // Scale factor: avatar shoulder width / signer shoulder width in MP space
-    let signerSW = 0.24; // typical default
-    if (pose && pose[11] && pose[12]) {
-      signerSW = Math.max(0.08, Math.abs(pose[11][0] - pose[12][0]));
-    }
-    const scale = c.shoulderWidth / signerSW;
-
-    // Map to avatar space with coordinate transforms
-    const offset = new THREE.Vector3(
-      -dx * scale * this._xFlip,  // mirror X for selfie view
-      -dy * scale,                 // invert Y (MP y goes down)
-      -dz * scale * 0.3            // dampen Z (MP depth is noisy)
-    );
-
-    // Clamp to 95% of arm reach to prevent T-pose / full extension
-    const maxReach = cached.L1 + cached.L2;
-    const offsetLen = offset.length();
-    if (offsetLen > maxReach * 0.95) {
-      offset.multiplyScalar((maxReach * 0.95) / offsetLen);
-    }
-
-    return shoulderWorld.add(offset);
   }
 
   // ─── Direct bone rotation from MediaPipe pose landmarks ─────────
@@ -1299,7 +1239,7 @@ export class HumanoidAvatar {
     upperArm.updateWorldMatrix(true, true);
 
     const foreParentWorldQ = new THREE.Quaternion();
-    foreArm.parent.getWorldQuaternion(foreParentWorldQ);
+    if (foreArm.parent) foreArm.parent.getWorldQuaternion(foreParentWorldQ);
     const foreParentInv = foreParentWorldQ.clone().invert();
     const localForeDir = foreDirWorld.clone().applyQuaternion(foreParentInv);
 
@@ -1311,8 +1251,8 @@ export class HumanoidAvatar {
     foreArm.quaternion.multiplyQuaternions(qFore, foreRestQ);
     this._filterBone(side + 'ForeArm', foreArm);
 
-    // ─── Diagnostic logging ─────
-    if ((this._diagCount || 0) < 3) {
+    // Diagnostic logging (enable with humanoid._debug = true)
+    if (this._debug && (this._diagCount || 0) < 3) {
       foreArm.updateWorldMatrix(true, true);
       const handBone = this.bones[side + 'Hand'];
       let actualWrist = new THREE.Vector3();
@@ -1326,6 +1266,11 @@ export class HumanoidAvatar {
     }
     } catch(e) {
       console.error(`[DirectArm ERROR] ${side}:`, e.message, e.stack);
+      // Reset to rest pose so the arm isn't left in an undefined state
+      const restUQ = this._restPose[side + 'UpperArm'];
+      const restFQ = this._restPose[side + 'ForeArm'];
+      if (restUQ) upperArm.quaternion.copy(restUQ);
+      if (restFQ) foreArm.quaternion.copy(restFQ);
     }
   }
 
@@ -1361,7 +1306,7 @@ export class HumanoidAvatar {
     // Forearm: also point toward target
     upperArm.updateWorldMatrix(true, true);
     const foreParentWorldQ = new THREE.Quaternion();
-    foreArm.parent.getWorldQuaternion(foreParentWorldQ);
+    if (foreArm.parent) foreArm.parent.getWorldQuaternion(foreParentWorldQ);
     const foreParentInv = foreParentWorldQ.clone().invert();
     const localForeDir = toTarget.clone().applyQuaternion(foreParentInv);
 
@@ -1548,8 +1493,12 @@ export class HumanoidAvatar {
     if (!spine) return;
 
     let ty = 0, tp = 0, n = 0, ax = 0, ay = 0;
-    if (lw) { ax += 0.5 - lw[0]; ay += 0.5 - lw[1]; n++; }
-    if (rw) { ax += 0.5 - rw[0]; ay += 0.5 - rw[1]; n++; }
+    // Use signer's actual shoulder center (not hardcoded 0.5) to avoid
+    // body tilt when the signer isn't perfectly centered in the frame
+    const cx = this._frameAnchor?.centerX ?? 0.5;
+    const cy = this._frameAnchor?.centerY ?? 0.5;
+    if (lw) { ax += cx - lw[0]; ay += cy - lw[1]; n++; }
+    if (rw) { ax += cx - rw[0]; ay += cy - rw[1]; n++; }
 
     if (n) {
       ax /= n; ay /= n;
@@ -1649,9 +1598,9 @@ export class HumanoidAvatar {
     // Anchor frame to signer's body proportions (before IK)
     this._updateFrameAnchor(pose);
 
-    // ── Diagnostic logging (first 3 frames only) ──
+    // Diagnostic logging (enable with humanoid._debug = true, first 3 frames)
     if (!this._diagCount) this._diagCount = 0;
-    if (this._diagCount < 3 && this._bodyCalib) {
+    if (this._debug && this._diagCount < 3 && this._bodyCalib) {
       const _fmt = (v) => v ? `(${v.x?.toFixed(3)??v[0]?.toFixed(3)}, ${v.y?.toFixed(3)??v[1]?.toFixed(3)}, ${v.z?.toFixed(3)??v[2]?.toFixed(3)})` : 'null';
       const _fmtA = (a) => a ? `[${a[0]?.toFixed(4)}, ${a[1]?.toFixed(4)}, ${a[2]?.toFixed(4) ?? 'undef'}]` : 'null';
       const c = this._bodyCalib;
@@ -1661,7 +1610,6 @@ export class HumanoidAvatar {
       }
       if (rh) {
         const wristWorld = this._lmToWorld(rh[0]);
-        // Read actual bone position
         const rUA = this.bones.rightUpperArm;
         if (rUA) {
           const restQ = this._restPose.rightUpperArm;
@@ -1688,7 +1636,6 @@ export class HumanoidAvatar {
       }
       this._diagCount++;
     }
-    // ── End diagnostic ──
 
     if (rh && rh.length >= 21) {
       this._solveArmDirect('right', pose, rh[0]);
