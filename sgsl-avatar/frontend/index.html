@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SgSL Avatar — SMPL-X Sign Language</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+
+  <header class="header">
+    <h1>SgSL Avatar</h1>
+    <p class="subtitle">SMPL-X Sign Language Viewer</p>
+  </header>
+
+  <main class="main">
+    <!-- Left: Sign library -->
+    <aside class="sidebar">
+      <h2 class="sidebar-title">Sign Library</h2>
+      <div id="sign-list" class="sign-list">
+        <p class="hint">Loading signs...</p>
+      </div>
+    </aside>
+
+    <!-- Center: Avatar viewport -->
+    <section class="viewer">
+      <div id="avatar-viewport" class="viewport"></div>
+
+      <!-- Playback controls -->
+      <div class="controls">
+        <div class="progress-bar">
+          <div id="progress-fill" class="progress-fill"></div>
+        </div>
+        <div class="control-row">
+          <button id="btn-replay" class="btn" title="Replay">Replay</button>
+          <button id="btn-pause" class="btn" title="Pause/Resume">Pause</button>
+          <button id="btn-stop" class="btn" title="Stop">Stop</button>
+          <span id="frame-info" class="frame-info">0 / 0</span>
+          <label class="speed-control">
+            Speed:
+            <input type="range" id="speed-slider" min="0.2" max="3" step="0.1" value="1">
+            <span id="speed-label">1.0x</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="status" class="status status-info">Initializing...</div>
+    </section>
+  </main>
+
+  <script type="module" src="js/player.js"></script>
+</body>
+</html>

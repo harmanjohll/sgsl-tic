@@ -1,0 +1,7 @@
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+numpy>=1.26.0
+# SMPL-X mesh generation (optional — only needed for generate_mesh.py)
+# torch>=2.0.0
+# smplx>=0.1.28
+# trimesh>=4.0.0
