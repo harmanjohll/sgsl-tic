@@ -199,12 +199,17 @@ export class SMPLXRetarget {
   // Convert MediaPipe normalized landmark to 3D world position
   _lmToWorld(lm, side) {
     // MediaPipe image coords: x=0(left)..1(right), y=0(top)..1(bottom)
-    // Selfie/mirrored: signer's right hand is at LOW x values
-    // Map to world: center at 0, signing space roughly ±0.5m around center
-    const scale = 1.8;  // maps 0..1 range to roughly body-width
-    const x = (0.5 - lm[0]) * scale;  // flip and center
-    const y = (0.5 - lm[1]) * scale + 1.2;  // flip, center, and offset to chest height
-    const z = -(lm[2] ?? 0) * 0.5 + 0.2;   // slight forward offset (in front of body)
+    // Selfie/mirrored camera: signer's right hand appears at varying x positions
+    // Data range observed: x=[0.26..0.82], y=[0.34..0.69]
+    //
+    // Map to world space centered on avatar:
+    //   x: image 0.5 → world 0 (center), scale to signing space width
+    //   y: image ~0.5 → chest height (~1.1m), inverted (image y goes down)
+    //   z: slight forward offset so hands are in front of body
+    const scale = 1.0;
+    const x = (0.5 - lm[0]) * scale;
+    const y = (0.5 - lm[1]) * scale + 1.1;  // chest height offset
+    const z = -(lm[2] ?? 0) * 0.3 + 0.25;   // in front of body
     return new THREE.Vector3(x, y, z);
   }
 
