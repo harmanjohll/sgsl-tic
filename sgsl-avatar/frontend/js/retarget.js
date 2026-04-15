@@ -108,10 +108,15 @@ export class SMPLXRetarget {
     this._time += 1 / 30;
     const { pose, leftHand: lh, rightHand: rh, face } = frame;
 
+    // Arms: use pose landmarks if available, otherwise fall back to hand wrist position
     if (pose) {
       this._applyArm('right', bones, restPose, pose, calib);
       this._applyArm('left', bones, restPose, pose, calib);
       this._applyHead(bones, restPose, pose);
+    } else {
+      // Fallback: use hand wrist landmark to aim the arm
+      if (rh && rh.length >= 21) this._applyArmFromWrist('right', bones, restPose, rh[0], calib);
+      if (lh && lh.length >= 21) this._applyArmFromWrist('left', bones, restPose, lh[0], calib);
     }
 
     if (rh && rh.length >= 21) {
@@ -153,6 +158,54 @@ export class SMPLXRetarget {
     this._pointBone(bones[upperName], upperName, restPose, uDir, calib, 2.5, 0.04);
     if (bones[upperName]) bones[upperName].updateWorldMatrix(true, true);
     this._pointBone(bones[foreName], foreName, restPose, fDir, calib, 2.5, 0.04);
+  }
+
+  // ─── Fallback: aim arm at wrist position (no pose data) ──
+  _applyArmFromWrist(side, bones, restPose, wristLM, calib) {
+    const upperName = side === 'left' ? 'leftUpperArm' : 'rightUpperArm';
+    const foreName = side === 'left' ? 'leftLowerArm' : 'rightLowerArm';
+    const upperBone = bones[upperName];
+    const foreBone = bones[foreName];
+    if (!upperBone) return;
+
+    // Convert MediaPipe wrist landmark to world-space target position
+    // MediaPipe: x=0..1 (left→right in image), y=0..1 (top→bottom), z=depth
+    // The signer's right hand appears on the LEFT side of the image (mirrored)
+    // World space: x=right, y=up, z=toward camera
+    const target = this._lmToWorld(wristLM, side);
+
+    // Get shoulder world position
+    const restQ = restPose[upperName];
+    if (restQ) upperBone.quaternion.copy(restQ);
+    upperBone.updateWorldMatrix(true, false);
+    const shoulderPos = new THREE.Vector3();
+    upperBone.getWorldPosition(shoulderPos);
+
+    // Direction from shoulder to target
+    const toTarget = new THREE.Vector3().subVectors(target, shoulderPos);
+    if (toTarget.length() < 0.01) return;
+    toTarget.normalize();
+
+    // Point upper arm toward target
+    this._pointBone(upperBone, upperName, restPose, toTarget, calib, 2.0, 0.03);
+    upperBone.updateWorldMatrix(true, true);
+
+    // Point forearm also toward target
+    if (foreBone) {
+      this._pointBone(foreBone, foreName, restPose, toTarget, calib, 2.0, 0.03);
+    }
+  }
+
+  // Convert MediaPipe normalized landmark to 3D world position
+  _lmToWorld(lm, side) {
+    // MediaPipe image coords: x=0(left)..1(right), y=0(top)..1(bottom)
+    // Selfie/mirrored: signer's right hand is at LOW x values
+    // Map to world: center at 0, signing space roughly ±0.5m around center
+    const scale = 1.8;  // maps 0..1 range to roughly body-width
+    const x = (0.5 - lm[0]) * scale;  // flip and center
+    const y = (0.5 - lm[1]) * scale + 1.2;  // flip, center, and offset to chest height
+    const z = -(lm[2] ?? 0) * 0.5 + 0.2;   // slight forward offset (in front of body)
+    return new THREE.Vector3(x, y, z);
   }
 
   _pointBone(bone, name, restPose, worldDir, calib, fCut, fBeta) {
