@@ -10,9 +10,10 @@ Run: uvicorn app:app --reload --port 8001
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -57,6 +58,67 @@ async def get_sign(label: str):
     with open(sign_path) as f:
         data = json.load(f)
     return JSONResponse(content=data)
+
+
+def _rebuild_manifest():
+    """Rebuild the manifest from all sign JSON files."""
+    signs = []
+    if SIGNS_DIR.exists():
+        for fp in sorted(SIGNS_DIR.glob("*.json")):
+            if fp.name.startswith("_"):
+                continue
+            with open(fp) as f:
+                data = json.load(f)
+            signs.append({"label": data["label"], "frames": len(data.get("landmarks", []))})
+    manifest_path = SIGNS_DIR / "_manifest.json"
+    with open(manifest_path, "w") as f:
+        json.dump(signs, f, indent=2)
+    return signs
+
+
+@app.post("/api/sign")
+async def save_sign(request: Request):
+    """Save a new sign recording."""
+    body = await request.json()
+    label = body.get("label", "").strip().lower()
+    landmarks = body.get("landmarks", [])
+    quality = body.get("quality")
+
+    if not label:
+        raise HTTPException(status_code=400, detail="Label is required")
+    if not landmarks or len(landmarks) < 5:
+        raise HTTPException(status_code=400, detail="Too few frames (minimum 5)")
+
+    # Sanitize label for filename
+    safe_label = "".join(c for c in label if c.isalnum() or c in ('_', '-')).strip()
+    if not safe_label:
+        raise HTTPException(status_code=400, detail="Invalid label")
+
+    # Save sign data
+    SIGNS_DIR.mkdir(parents=True, exist_ok=True)
+    sign_data = {
+        "label": safe_label,
+        "landmarks": landmarks,
+        "quality": quality,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "format": "holistic",
+    }
+
+    sign_path = SIGNS_DIR / f"{safe_label}.json"
+    with open(sign_path, "w") as f:
+        json.dump(sign_data, f)
+
+    # Rebuild manifest
+    _rebuild_manifest()
+
+    size_kb = sign_path.stat().st_size / 1024
+    print(f"[Save] Sign '{safe_label}': {len(landmarks)} frames, {size_kb:.1f} KB")
+
+    return JSONResponse(content={
+        "status": "ok",
+        "label": safe_label,
+        "frames": len(landmarks),
+    })
 
 
 # Serve frontend static files

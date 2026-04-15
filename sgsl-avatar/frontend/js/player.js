@@ -228,4 +228,5 @@ async function init() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', init);
+// Auto-init when imported
+init();

@@ -179,6 +179,85 @@ html, body {
 .status-loading { color: var(--warning); }
 
 .hint { color: var(--text-dim); font-size: 13px; }
+.hidden { display: none !important; }
+
+/* ─── Tabs ─────────────────────────────────── */
+.tabs { display: flex; gap: 4px; margin-left: auto; }
+.tab {
+  background: transparent; border: 1px solid transparent;
+  border-radius: 6px; color: var(--text-dim); padding: 4px 16px;
+  cursor: pointer; font: 500 13px/1.4 inherit; transition: all 0.15s;
+}
+.tab:hover { color: var(--text); border-color: var(--border); }
+.tab.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+.tab-content { display: none; }
+.tab-content.active { display: flex; }
+
+/* ─── Record tab ───────────────────────────── */
+.record-panel {
+  width: 380px; min-width: 320px;
+  border-right: 1px solid var(--border);
+  padding: 16px; overflow-y: auto;
+  background: var(--surface);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.camera-container {
+  position: relative; border-radius: 10px; overflow: hidden;
+  background: #000; aspect-ratio: 4/3;
+}
+.rec-video {
+  width: 100%; height: 100%; object-fit: cover;
+  transform: scaleX(-1); /* mirror */
+}
+.rec-overlay {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; transform: scaleX(-1);
+}
+.camera-status {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-dim); font-size: 13px;
+}
+.rec-controls { display: flex; flex-direction: column; gap: 8px; }
+.rec-label-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.rec-input {
+  flex: 1; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); padding: 6px 10px;
+  font: 14px inherit; outline: none;
+}
+.rec-input:focus { border-color: var(--accent); }
+.rec-btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-record { background: #cc3344; border-color: #cc3344; color: #fff; font-weight: 600; }
+.btn-record:hover { background: #dd4455; }
+.btn-save { background: #339955; border-color: #339955; color: #fff; font-weight: 600; }
+.btn-save:hover { background: #44aa66; }
+.btn-save:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-discard { border-color: var(--error); color: var(--error); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.rec-timer { font: 600 14px/1.4 inherit; color: var(--warning); font-variant-numeric: tabular-nums; }
+
+/* ─── Quality panel ────────────────────────── */
+.quality-panel {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px;
+}
+.quality-title { font-size: 13px; font-weight: 600; color: var(--text-dim); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+.quality-scores { display: flex; flex-direction: column; gap: 6px; }
+.q-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.q-label { width: 80px; color: var(--text-dim); }
+.q-bar { flex: 1; height: 6px; background: var(--surface); border-radius: 3px; overflow: hidden; }
+.q-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.q-good { background: var(--success); }
+.q-ok { background: var(--warning); }
+.q-bad { background: var(--error); }
+.q-pct { width: 100px; text-align: right; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.quality-overall { margin-top: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.q-grade { font-size: 28px; font-weight: 800; }
+.q-grade.q-good { color: var(--success); }
+.q-grade.q-ok { color: var(--warning); }
+.q-grade.q-bad { color: var(--error); }
+.q-overall-text { font-size: 13px; color: var(--text-dim); }
+.q-issues { margin-top: 8px; padding-left: 18px; font-size: 12px; color: var(--warning); list-style: disc; }
 
 /* Responsive */
 @media (max-width: 640px) {

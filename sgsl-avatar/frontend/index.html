@@ -3,11 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SgSL Avatar — Sign Language Viewer</title>
+  <title>SgSL Avatar — Sign Language</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
+
+  <!-- MediaPipe Holistic (for recording) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/holistic.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
 
   <script type="importmap">
   {
@@ -23,11 +27,14 @@
 
   <header class="header">
     <h1>SgSL Avatar</h1>
-    <p class="subtitle">Sign Language Viewer</p>
+    <nav class="tabs">
+      <button class="tab active" data-tab="viewer">Viewer</button>
+      <button class="tab" data-tab="record">Record</button>
+    </nav>
   </header>
 
-  <main class="main">
-    <!-- Left: Sign library -->
+  <!-- ====== VIEWER TAB ====== -->
+  <main id="tab-viewer" class="main tab-content active">
     <aside class="sidebar">
       <h2 class="sidebar-title">Sign Library</h2>
       <div id="sign-list" class="sign-list">
@@ -35,19 +42,16 @@
       </div>
     </aside>
 
-    <!-- Center: Avatar viewport -->
     <section class="viewer">
       <div id="avatar-viewport" class="viewport"></div>
-
-      <!-- Playback controls -->
       <div class="controls">
         <div class="progress-bar">
           <div id="progress-fill" class="progress-fill"></div>
         </div>
         <div class="control-row">
-          <button id="btn-replay" class="btn" title="Replay">Replay</button>
-          <button id="btn-pause" class="btn" title="Pause/Resume">Pause</button>
-          <button id="btn-stop" class="btn" title="Stop">Stop</button>
+          <button id="btn-replay" class="btn">Replay</button>
+          <button id="btn-pause" class="btn">Pause</button>
+          <button id="btn-stop" class="btn">Stop</button>
           <span id="frame-info" class="frame-info">0 / 0</span>
           <label class="speed-control">
             Speed:
@@ -56,11 +60,57 @@
           </label>
         </div>
       </div>
-
       <div id="status" class="status status-info">Initializing...</div>
     </section>
   </main>
 
-  <script type="module" src="js/player.js"></script>
+  <!-- ====== RECORD TAB ====== -->
+  <main id="tab-record" class="main tab-content">
+    <!-- Left: Camera + controls -->
+    <section class="record-panel">
+      <h2 class="sidebar-title">Camera</h2>
+      <div class="camera-container">
+        <video id="rec-video" class="rec-video" playsinline></video>
+        <canvas id="rec-overlay" class="rec-overlay"></canvas>
+        <div id="rec-camera-status" class="camera-status">Camera loading...</div>
+      </div>
+
+      <div class="rec-controls">
+        <div class="rec-label-row">
+          <label for="rec-label">Sign label:</label>
+          <input type="text" id="rec-label" class="rec-input" placeholder="e.g. hello, thank_you">
+        </div>
+
+        <div class="rec-btn-row">
+          <button id="btn-rec-start" class="btn btn-record">Record</button>
+          <button id="btn-rec-stop" class="btn" disabled>Stop</button>
+        </div>
+
+        <div id="rec-timer" class="rec-timer"></div>
+      </div>
+
+      <!-- Quality gate results -->
+      <div id="quality-panel" class="quality-panel hidden">
+        <h3 class="quality-title">Quality Check</h3>
+        <div id="quality-scores" class="quality-scores"></div>
+        <div id="quality-overall" class="quality-overall"></div>
+        <div class="rec-btn-row">
+          <button id="btn-rec-preview" class="btn">Preview on Avatar</button>
+          <button id="btn-rec-save" class="btn btn-save" disabled>Save Sign</button>
+          <button id="btn-rec-discard" class="btn btn-discard">Discard</button>
+        </div>
+      </div>
+
+      <div id="rec-status" class="status status-info">Enter a sign label and click Record.</div>
+    </section>
+
+    <!-- Right: Live avatar preview -->
+    <section class="viewer">
+      <div id="rec-avatar-viewport" class="viewport"></div>
+      <div id="rec-avatar-status" class="status status-info">Avatar will mirror your signing in real-time.</div>
+    </section>
+  </main>
+
+  <script type="module" src="js/app.js"></script>
 </body>
 </html>
