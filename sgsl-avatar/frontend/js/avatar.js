@@ -1,124 +1,63 @@
 /* ============================================================
-   SgSL Avatar — Three.js Scene + SMPL-X Skeleton
+   SgSL Avatar — Three.js Scene + VRM Avatar Loader
    ============================================================
-   Creates a 3D scene with either:
-   1. A geometric placeholder humanoid (capsules/spheres) using
-      the exact SMPL-X 55-joint skeleton — works immediately
-   2. A full SMPL-X GLB mesh (when available)
+   Loads a VRM avatar model via @pixiv/three-vrm. VRM provides:
+   - Standardized humanoid skeleton with finger bones
+   - Standardized facial expressions (blend shapes)
+   - Anime/cartoon aesthetic
+   Falls back to geometric placeholder if no VRM file found.
    ============================================================ */
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { SMPLX_JOINTS } from './retarget.js';
+import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
-// SMPL-X skeleton: parent index for each joint
-const SMPLX_PARENT = [
-  -1,  // 0: pelvis (root)
-   0,  // 1: left_hip
-   0,  // 2: right_hip
-   0,  // 3: spine1
-   1,  // 4: left_knee
-   2,  // 5: right_knee
-   3,  // 6: spine2
-   4,  // 7: left_ankle
-   5,  // 8: right_ankle
-   6,  // 9: spine3
-   7,  // 10: left_foot
-   8,  // 11: right_foot
-  9,   // 12: neck
-  9,   // 13: left_collar
-  9,   // 14: right_collar
-  12,  // 15: head
-  13,  // 16: left_shoulder
-  14,  // 17: right_shoulder
-  16,  // 18: left_elbow
-  17,  // 19: right_elbow
-  18,  // 20: left_wrist
-  19,  // 21: right_wrist
-  // Left hand (22-36), all parented to left_wrist (20)
-  20, 22, 23,  // index 1,2,3
-  20, 25, 26,  // middle 1,2,3
-  20, 28, 29,  // pinky 1,2,3
-  20, 31, 32,  // ring 1,2,3
-  20, 34, 35,  // thumb 1,2,3
-  // Right hand (37-51), all parented to right_wrist (21)
-  21, 37, 38,  // index 1,2,3
-  21, 40, 41,  // middle 1,2,3
-  21, 43, 44,  // pinky 1,2,3
-  21, 46, 47,  // ring 1,2,3
-  21, 49, 50,  // thumb 1,2,3
-  // Face
-  15, 15, 15,  // jaw, left_eye, right_eye → head
-];
-
-// SMPL-X T-pose joint positions (approximate, in meters)
-// Based on a ~1.7m tall neutral body
-const SMPLX_REST_POS = [
-  [0, 0.93, 0],       // 0: pelvis
-  [0.08, 0.90, 0],    // 1: left_hip
-  [-0.08, 0.90, 0],   // 2: right_hip
-  [0, 1.05, 0],       // 3: spine1
-  [0.08, 0.50, 0],    // 4: left_knee
-  [-0.08, 0.50, 0],   // 5: right_knee
-  [0, 1.18, 0],       // 6: spine2
-  [0.08, 0.08, 0],    // 7: left_ankle
-  [-0.08, 0.08, 0],   // 8: right_ankle
-  [0, 1.32, 0],       // 9: spine3
-  [0.08, 0.02, 0],    // 10: left_foot
-  [-0.08, 0.02, 0],   // 11: right_foot
-  [0, 1.42, 0],       // 12: neck
-  [0.06, 1.38, 0],    // 13: left_collar
-  [-0.06, 1.38, 0],   // 14: right_collar
-  [0, 1.52, 0],       // 15: head
-  [0.18, 1.38, 0],    // 16: left_shoulder
-  [-0.18, 1.38, 0],   // 17: right_shoulder
-  [0.44, 1.38, 0],    // 18: left_elbow
-  [-0.44, 1.38, 0],   // 19: right_elbow
-  [0.68, 1.38, 0],    // 20: left_wrist
-  [-0.68, 1.38, 0],   // 21: right_wrist
-  // Left hand fingers (spread from left wrist)
-  [0.72, 1.39, -0.01],  // 22: left_index1
-  [0.76, 1.39, -0.01],  // 23: left_index2
-  [0.79, 1.39, -0.01],  // 24: left_index3
-  [0.72, 1.38, 0],      // 25: left_middle1
-  [0.76, 1.38, 0],      // 26: left_middle2
-  [0.79, 1.38, 0],      // 27: left_middle3
-  [0.72, 1.36, 0.02],   // 28: left_pinky1
-  [0.75, 1.36, 0.02],   // 29: left_pinky2
-  [0.77, 1.36, 0.02],   // 30: left_pinky3
-  [0.72, 1.37, 0.01],   // 31: left_ring1
-  [0.76, 1.37, 0.01],   // 32: left_ring2
-  [0.79, 1.37, 0.01],   // 33: left_ring3
-  [0.71, 1.40, -0.02],  // 34: left_thumb1
-  [0.74, 1.41, -0.03],  // 35: left_thumb2
-  [0.76, 1.42, -0.04],  // 36: left_thumb3
-  // Right hand fingers (mirror of left)
-  [-0.72, 1.39, -0.01], // 37: right_index1
-  [-0.76, 1.39, -0.01], // 38: right_index2
-  [-0.79, 1.39, -0.01], // 39: right_index3
-  [-0.72, 1.38, 0],     // 40: right_middle1
-  [-0.76, 1.38, 0],     // 41: right_middle2
-  [-0.79, 1.38, 0],     // 42: right_middle3
-  [-0.72, 1.36, 0.02],  // 43: right_pinky1
-  [-0.75, 1.36, 0.02],  // 44: right_pinky2
-  [-0.77, 1.36, 0.02],  // 45: right_pinky3
-  [-0.72, 1.37, 0.01],  // 46: right_ring1
-  [-0.76, 1.37, 0.01],  // 47: right_ring2
-  [-0.79, 1.37, 0.01],  // 48: right_ring3
-  [-0.71, 1.40, -0.02], // 49: right_thumb1
-  [-0.74, 1.41, -0.03], // 50: right_thumb2
-  [-0.76, 1.42, -0.04], // 51: right_thumb3
-  // Face
-  [0, 1.46, 0.03],      // 52: jaw
-  [0.03, 1.54, 0.06],   // 53: left_eye
-  [-0.03, 1.54, 0.06],  // 54: right_eye
-];
-
-// Joint names (reverse map from SMPLX_JOINTS)
-const JOINT_NAMES = Object.entries(SMPLX_JOINTS)
-  .sort((a, b) => a[1] - b[1])
-  .map(e => e[0]);
+// VRM humanoid bone names (standardized)
+export const VRM_BONES = {
+  // Body
+  hips: 'hips', spine: 'spine', chest: 'chest',
+  upperChest: 'upperChest', neck: 'neck', head: 'head',
+  // Arms
+  leftShoulder: 'leftShoulder', leftUpperArm: 'leftUpperArm',
+  leftLowerArm: 'leftLowerArm', leftHand: 'leftHand',
+  rightShoulder: 'rightShoulder', rightUpperArm: 'rightUpperArm',
+  rightLowerArm: 'rightLowerArm', rightHand: 'rightHand',
+  // Left fingers
+  leftThumbMetacarpal: 'leftThumbMetacarpal',
+  leftThumbProximal: 'leftThumbProximal',
+  leftThumbDistal: 'leftThumbDistal',
+  leftIndexProximal: 'leftIndexProximal',
+  leftIndexIntermediate: 'leftIndexIntermediate',
+  leftIndexDistal: 'leftIndexDistal',
+  leftMiddleProximal: 'leftMiddleProximal',
+  leftMiddleIntermediate: 'leftMiddleIntermediate',
+  leftMiddleDistal: 'leftMiddleDistal',
+  leftRingProximal: 'leftRingProximal',
+  leftRingIntermediate: 'leftRingIntermediate',
+  leftRingDistal: 'leftRingDistal',
+  leftLittleProximal: 'leftLittleProximal',
+  leftLittleIntermediate: 'leftLittleIntermediate',
+  leftLittleDistal: 'leftLittleDistal',
+  // Right fingers
+  rightThumbMetacarpal: 'rightThumbMetacarpal',
+  rightThumbProximal: 'rightThumbProximal',
+  rightThumbDistal: 'rightThumbDistal',
+  rightIndexProximal: 'rightIndexProximal',
+  rightIndexIntermediate: 'rightIndexIntermediate',
+  rightIndexDistal: 'rightIndexDistal',
+  rightMiddleProximal: 'rightMiddleProximal',
+  rightMiddleIntermediate: 'rightMiddleIntermediate',
+  rightMiddleDistal: 'rightMiddleDistal',
+  rightRingProximal: 'rightRingProximal',
+  rightRingIntermediate: 'rightRingIntermediate',
+  rightRingDistal: 'rightRingDistal',
+  rightLittleProximal: 'rightLittleProximal',
+  rightLittleIntermediate: 'rightLittleIntermediate',
+  rightLittleDistal: 'rightLittleDistal',
+  // Eyes & jaw
+  leftEye: 'leftEye', rightEye: 'rightEye', jaw: 'jaw',
+};
 
 export class SMPLXAvatar {
   constructor(containerEl) {
@@ -132,27 +71,22 @@ export class SMPLXAvatar {
     this.controls = null;
     this.clock = new THREE.Clock();
 
-    // Skeleton
-    this.bones = {};       // name → THREE.Bone
-    this.restPose = {};    // name → THREE.Quaternion (rest)
-    this.restDirs = {};    // name → THREE.Vector3 (bone direction at rest)
-    this.rootBone = null;
+    // VRM model
+    this.vrm = null;
 
-    // Placeholder visuals
-    this._jointMeshes = {};
-    this._boneMeshes = [];
-    this._placeholderGroup = null;
-
-    // GLB model (when loaded)
-    this._glbModel = null;
+    // Bone references (populated after VRM load)
+    this.bones = {};
+    this.restPose = {};
+    this.restDirs = {};
 
     // State
     this.loaded = false;
     this._breathPhase = 0;
+    this._isPlaying = false;
+    this._statusEl = null;
 
     this._initScene();
-    this._buildSkeleton();
-    this._tryLoadGLB();
+    this._loadVRM();
   }
 
   // ─── Scene setup ──────────────────────────────────────────
@@ -164,8 +98,8 @@ export class SMPLXAvatar {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x1a1d3e);
 
-    this.camera = new THREE.PerspectiveCamera(45, w / h, 0.05, 50);
-    this.camera.position.set(0, 1.2, 3.5);
+    this.camera = new THREE.PerspectiveCamera(30, w / h, 0.05, 50);
+    this.camera.position.set(0, 1.2, 3.0);
     this.camera.lookAt(0, 1.0, 0);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -179,6 +113,16 @@ export class SMPLXAvatar {
     this.container.innerHTML = '';
     this.container.appendChild(this.renderer.domElement);
 
+    // Loading indicator
+    this._statusEl = document.createElement('div');
+    this._statusEl.style.cssText = `
+      position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+      color:#8888cc; font:14px/1.4 Inter,sans-serif; text-align:center;
+    `;
+    this._statusEl.textContent = 'Loading avatar...';
+    this.container.style.position = 'relative';
+    this.container.appendChild(this._statusEl);
+
     // Controls
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
@@ -187,7 +131,7 @@ export class SMPLXAvatar {
     this.controls.update();
 
     // Lighting
-    const hemi = new THREE.HemisphereLight(0xffeedd, 0x303050, 0.6);
+    const hemi = new THREE.HemisphereLight(0xffeedd, 0x303050, 0.8);
     this.scene.add(hemi);
 
     const key = new THREE.DirectionalLight(0xfff8f0, 1.6);
@@ -225,84 +169,126 @@ export class SMPLXAvatar {
     // Render loop
     const animate = () => {
       requestAnimationFrame(animate);
+      const dt = this.clock.getDelta();
       if (this.controls) this.controls.update();
-      if (this.loaded && !this._isPlaying) this._breathe(this.clock.getDelta());
+      if (this.vrm) this.vrm.update(dt);
+      if (this.loaded && !this._isPlaying) this._breathe(dt);
       this.renderer.render(this.scene, this.camera);
     };
     animate();
   }
 
-  // ─── Build SMPL-X skeleton ────────────────────────────────
+  // ─── VRM Loading ──────────────────────────────────────────
 
-  _buildSkeleton() {
-    const boneObjects = [];
+  _loadVRM() {
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMLoaderPlugin(parser));
 
-    // Create bones
-    for (let i = 0; i < JOINT_NAMES.length; i++) {
-      const bone = new THREE.Bone();
-      bone.name = JOINT_NAMES[i];
-      boneObjects.push(bone);
+    loader.load('assets/avatar.vrm',
+      (gltf) => {
+        const vrm = gltf.userData.vrm;
+        if (!vrm) {
+          this._showError('VRM data not found in file');
+          return;
+        }
+
+        // Rotate model to face camera (VRM faces +Z by default)
+        VRMUtils.rotateVRM0(vrm);
+
+        this.vrm = vrm;
+        this.scene.add(vrm.scene);
+
+        // Enable shadows
+        vrm.scene.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+
+        // Map VRM bones to our bone dictionary
+        this._mapBones();
+        this._saveRestPose();
+        this._cacheRestDirs();
+        this._frameCam();
+
+        if (this._statusEl) {
+          this._statusEl.remove();
+          this._statusEl = null;
+        }
+
+        this.loaded = true;
+        const boneCount = Object.keys(this.bones).filter(k => this.bones[k]).length;
+        console.log(`[Avatar] VRM loaded: ${boneCount} bones mapped`);
+      },
+      (progress) => {
+        if (progress.total > 0 && this._statusEl) {
+          const pct = Math.round((progress.loaded / progress.total) * 100);
+          this._statusEl.textContent = `Loading avatar... ${pct}%`;
+        }
+      },
+      (error) => {
+        console.warn('[Avatar] VRM not found:', error.message);
+        this._showError(
+          'No avatar.vrm found.\n\n' +
+          'Place a VRM file at frontend/assets/avatar.vrm\n' +
+          'Free models: vroid.com/en/studio or hub.vroid.com'
+        );
+      }
+    );
+  }
+
+  _showError(msg) {
+    if (this._statusEl) {
+      this._statusEl.innerHTML = `
+        <div style="opacity:0.7">
+          <svg viewBox="0 0 48 48" width="48" height="48" fill="none"
+               stroke="currentColor" stroke-width="1.5">
+            <circle cx="24" cy="16" r="10"/>
+            <path d="M10 44 Q10 30 24 28 Q38 30 38 44"/>
+          </svg>
+          <p style="margin:8px 0 0;font-size:12px;white-space:pre-line">${msg}</p>
+        </div>`;
     }
+  }
 
-    // Set up parent-child hierarchy
-    for (let i = 0; i < JOINT_NAMES.length; i++) {
-      const parentIdx = SMPLX_PARENT[i];
-      if (parentIdx >= 0) {
-        boneObjects[parentIdx].add(boneObjects[i]);
+  _mapBones() {
+    if (!this.vrm?.humanoid) return;
+    const h = this.vrm.humanoid;
+
+    for (const boneName of Object.values(VRM_BONES)) {
+      const node = h.getNormalizedBoneNode(boneName)
+                || h.getRawBoneNode(boneName);
+      if (node) {
+        this.bones[boneName] = node;
       }
     }
 
-    // Set bone positions (relative to parent)
-    for (let i = 0; i < JOINT_NAMES.length; i++) {
-      const pos = SMPLX_REST_POS[i];
-      const parentIdx = SMPLX_PARENT[i];
-      if (parentIdx >= 0) {
-        const pPos = SMPLX_REST_POS[parentIdx];
-        boneObjects[i].position.set(
-          pos[0] - pPos[0], pos[1] - pPos[1], pos[2] - pPos[2]);
-      } else {
-        boneObjects[i].position.set(pos[0], pos[1], pos[2]);
-      }
+    // Log finger status
+    const fingerBones = Object.keys(this.bones).filter(k =>
+      k.includes('Thumb') || k.includes('Index') || k.includes('Middle') ||
+      k.includes('Ring') || k.includes('Little'));
+    console.log(`[Avatar] Fingers: ${fingerBones.length} bones`);
+    if (fingerBones.length === 0) {
+      console.warn('[Avatar] No finger bones found — hand animation will be limited');
     }
-
-    // Store references
-    for (let i = 0; i < JOINT_NAMES.length; i++) {
-      this.bones[JOINT_NAMES[i]] = boneObjects[i];
-    }
-
-    this.rootBone = boneObjects[0];
-    this.scene.add(this.rootBone);
-
-    // Update world matrices and cache rest pose
-    this.rootBone.updateWorldMatrix(true, true);
-    this._saveRestPose();
-    this._cacheRestDirs();
-
-    // Build visual placeholder
-    this._buildPlaceholder();
-
-    this.loaded = true;
-    console.log(`[Avatar] Skeleton built: ${JOINT_NAMES.length} joints`);
   }
 
   _saveRestPose() {
     for (const [name, bone] of Object.entries(this.bones)) {
-      this.restPose[name] = bone.quaternion.clone();
+      if (bone) this.restPose[name] = bone.quaternion.clone();
     }
   }
 
   _cacheRestDirs() {
-    this.rootBone.updateWorldMatrix(true, true);
     for (const [name, bone] of Object.entries(this.bones)) {
-      if (!bone.children.length) continue;
-      // Rest direction = toward first child
-      const bonePos = new THREE.Vector3();
-      const childPos = new THREE.Vector3();
-      bone.getWorldPosition(bonePos);
-      bone.children[0].getWorldPosition(childPos);
-      const dir = childPos.sub(bonePos);
+      if (!bone || !bone.children.length) continue;
+      const bPos = new THREE.Vector3();
+      const cPos = new THREE.Vector3();
+      bone.getWorldPosition(bPos);
+      bone.children[0].getWorldPosition(cPos);
+      const dir = cPos.sub(bPos);
       if (dir.length() > 0.001) {
-        // Convert to parent-local space
         const parentQ = new THREE.Quaternion();
         if (bone.parent) bone.parent.getWorldQuaternion(parentQ);
         this.restDirs[name] = dir.normalize().applyQuaternion(parentQ.invert());
@@ -310,170 +296,71 @@ export class SMPLXAvatar {
     }
   }
 
-  // ─── Geometric placeholder ────────────────────────────────
-
-  _buildPlaceholder() {
-    this._placeholderGroup = new THREE.Group();
-    this._placeholderGroup.name = 'placeholder';
-
-    const jointMat = new THREE.MeshStandardMaterial({
-      color: 0x6688cc, roughness: 0.4, metalness: 0.2 });
-    const boneMat = new THREE.MeshStandardMaterial({
-      color: 0x4466aa, roughness: 0.5, metalness: 0.1 });
-    const headMat = new THREE.MeshStandardMaterial({
-      color: 0x7799dd, roughness: 0.3, metalness: 0.2 });
-
-    // Joint spheres
-    for (let i = 0; i < JOINT_NAMES.length; i++) {
-      const name = JOINT_NAMES[i];
-      const isHand = i >= 22 && i <= 51;
-      const isHead = name === 'head';
-      const isEye = name.includes('eye');
-
-      let radius = isHand ? 0.008 : (isHead ? 0.10 : (isEye ? 0.015 : 0.025));
-      const geo = isHead
-        ? new THREE.SphereGeometry(radius, 24, 16)
-        : new THREE.SphereGeometry(radius, 8, 6);
-      const mat = isHead ? headMat : jointMat;
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.castShadow = true;
-
-      this._jointMeshes[name] = mesh;
-      this._placeholderGroup.add(mesh);
+  _frameCam() {
+    if (!this.vrm) return;
+    const box = new THREE.Box3().setFromObject(this.vrm.scene);
+    const height = box.max.y - box.min.y;
+    const camY = height * 0.55;
+    this.camera.position.set(0, camY, height * 2.5);
+    this.camera.lookAt(0, camY, 0);
+    this.camera.updateProjectionMatrix();
+    if (this.controls) {
+      this.controls.target.set(0, camY, 0);
+      this.controls.update();
     }
-
-    // Bone capsules (connect parent → child)
-    for (let i = 1; i < JOINT_NAMES.length; i++) {
-      const parentIdx = SMPLX_PARENT[i];
-      if (parentIdx < 0) continue;
-
-      const pPos = SMPLX_REST_POS[parentIdx];
-      const cPos = SMPLX_REST_POS[i];
-      const isHand = i >= 22 && i <= 51;
-
-      const start = new THREE.Vector3(...pPos);
-      const end = new THREE.Vector3(...cPos);
-      const len = start.distanceTo(end);
-      if (len < 0.001) continue;
-
-      const radius = isHand ? 0.004 : 0.012;
-      const geo = new THREE.CylinderGeometry(radius, radius, len, 6);
-      geo.translate(0, len / 2, 0);
-      geo.rotateX(Math.PI / 2);
-
-      const mesh = new THREE.Mesh(geo, boneMat);
-      mesh.castShadow = true;
-      mesh._parentIdx = parentIdx;
-      mesh._childIdx = i;
-      this._boneMeshes.push(mesh);
-      this._placeholderGroup.add(mesh);
-    }
-
-    this._updatePlaceholder();
-    this.scene.add(this._placeholderGroup);
-  }
-
-  _updatePlaceholder() {
-    if (!this._placeholderGroup) return;
-    this.rootBone.updateWorldMatrix(true, true);
-
-    // Update joint positions
-    for (const [name, mesh] of Object.entries(this._jointMeshes)) {
-      const bone = this.bones[name];
-      if (bone) {
-        const pos = new THREE.Vector3();
-        bone.getWorldPosition(pos);
-        mesh.position.copy(pos);
-      }
-    }
-
-    // Update bone capsules
-    for (const mesh of this._boneMeshes) {
-      const parentBone = Object.values(this.bones)[mesh._parentIdx];
-      const childBone = Object.values(this.bones)[mesh._childIdx];
-      if (!parentBone || !childBone) continue;
-
-      const start = new THREE.Vector3();
-      const end = new THREE.Vector3();
-      parentBone.getWorldPosition(start);
-      childBone.getWorldPosition(end);
-
-      mesh.position.copy(start);
-      mesh.lookAt(end);
-    }
-  }
-
-  // ─── GLB loading (upgrade path) ───────────────────────────
-
-  _tryLoadGLB() {
-    const loader = new GLTFLoader();
-    loader.load('assets/smplx_neutral.glb',
-      (gltf) => {
-        console.log('[Avatar] SMPL-X GLB loaded — swapping placeholder');
-        this._glbModel = gltf.scene;
-        // Hide placeholder
-        if (this._placeholderGroup) this._placeholderGroup.visible = false;
-        // Add model
-        this.scene.add(this._glbModel);
-        // Remap bones from GLB skeleton to our bone references
-        this._remapGLBBones(gltf);
-      },
-      undefined,
-      () => {
-        console.log('[Avatar] No SMPL-X GLB found — using geometric placeholder');
-      }
-    );
-  }
-
-  _remapGLBBones(gltf) {
-    // Walk the GLB skeleton and match bone names to SMPL-X joints
-    this._glbModel.traverse((child) => {
-      if (child.isBone && child.name in SMPLX_JOINTS) {
-        this.bones[child.name] = child;
-      }
-    });
-    this._saveRestPose();
-    this._cacheRestDirs();
   }
 
   // ─── Idle breathing ───────────────────────────────────────
 
   _breathe(dt) {
     this._breathPhase += dt * 0.25 * Math.PI * 2;
-    const amt = Math.sin(this._breathPhase) * 0.003;
-
-    const spine2 = this.bones.spine2;
-    const rest = this.restPose.spine2;
-    if (spine2 && rest) {
-      spine2.quaternion.copy(rest);
-      spine2.rotateX(amt);
+    const amt = Math.sin(this._breathPhase) * 0.01;
+    const chest = this.bones.chest || this.bones.spine;
+    const rest = this.restPose.chest || this.restPose.spine;
+    if (chest && rest) {
+      chest.quaternion.copy(rest);
+      chest.rotateX(amt);
     }
+  }
 
-    this._updatePlaceholder();
+  // ─── Expression API (VRM blend shapes) ────────────────────
+
+  setExpression(name, value) {
+    if (this.vrm?.expressionManager) {
+      this.vrm.expressionManager.setValue(name, value);
+    }
+  }
+
+  resetExpressions() {
+    if (!this.vrm?.expressionManager) return;
+    const names = ['happy', 'angry', 'sad', 'surprised', 'neutral',
+                   'aa', 'ee', 'ih', 'oh', 'ou', 'blink',
+                   'blinkLeft', 'blinkRight'];
+    for (const n of names) {
+      this.vrm.expressionManager.setValue(n, 0);
+    }
   }
 
   // ─── Public API ───────────────────────────────────────────
 
-  /** Render a single frame of landmarks. Called by player.js. */
   renderFrame(frame) {
-    if (!this.loaded || !frame) return;
-
+    if (!this.loaded || !frame) return null;
     // Reset to rest pose
     for (const [name, bone] of Object.entries(this.bones)) {
       const rest = this.restPose[name];
       if (rest) bone.quaternion.copy(rest);
     }
-
+    this.resetExpressions();
     return { bones: this.bones, restPose: this.restPose, restDirs: this.restDirs };
   }
 
-  /** Update placeholder visuals after retargeting. */
   updateVisuals() {
-    this._updatePlaceholder();
+    // VRM handles its own rendering — nothing extra needed
   }
 
-  /** Get calibration data for the retargeting engine. */
   getCalibration() {
     return { restDirs: this.restDirs };
   }
+
+  setPlaying(val) { this._isPlaying = val; }
 }

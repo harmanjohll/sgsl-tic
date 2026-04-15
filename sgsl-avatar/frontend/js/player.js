@@ -95,6 +95,7 @@ function tick() {
   if (fi >= seq.length - 1) {
     renderFrame(seq[seq.length - 1]);
     playing = false;
+    avatar.setPlaying(false);
     updatePlayBtn();
     setStatus('Playback complete.', 'success');
     return;
@@ -122,12 +123,14 @@ async function playSign(label) {
       f && (f.leftHand || f.rightHand));
     if (!seq.length) {
       setStatus(`No valid frames for "${label}".`, 'error');
+      avatar.setPlaying(false);
       return;
     }
 
     retarget.reset();
     fi = 0; fAcc = 0;
     playing = true; paused = false;
+    avatar.setPlaying(true);
     lastT = performance.now();
     if (rafId) cancelAnimationFrame(rafId);
     updatePlayBtn();
@@ -159,6 +162,7 @@ function replay() {
 function stopPlayback() {
   playing = false;
   paused = false;
+  if (avatar) avatar.setPlaying(false);
   if (rafId) cancelAnimationFrame(rafId);
   updatePlayBtn();
 }
