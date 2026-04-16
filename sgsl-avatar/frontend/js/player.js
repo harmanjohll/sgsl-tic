@@ -108,11 +108,22 @@ function tick() {
 }
 
 function renderFrame(frame) {
-  if (!avatar || !retarget || !frame) return;
-  const data = avatar.renderFrame(frame);
-  if (!data) return;
-  retarget.applyFrame(data.bones, data.restPose, frame, avatar.getCalibration());
-  avatar.updateVisuals();
+  if (!avatar?.vrm || !retarget || !frame) return;
+
+  // Convert stored holistic frame to MediaPipe-like results object
+  // so Kalidokit can process it via applyFromMediaPipe
+  const fakeResults = {
+    poseLandmarks: frame.pose ? frame.pose.map(p => ({ x: p[0], y: p[1], z: p[2], visibility: p[3] || 0 })) : null,
+    // World landmarks: use pose data as approximation (stored frames don't have separate world landmarks)
+    za: frame.pose ? frame.pose.map(p => ({ x: p[0], y: p[1], z: p[2], visibility: p[3] || 0 })) : null,
+    faceLandmarks: frame.face ? frame.face.map(p => ({ x: p[0], y: p[1], z: p[2] })) : null,
+    // Hands are stored in our format (arrays of [x,y,z]), convert to MediaPipe format
+    // Note: hands are NOT swapped here — applyFromMediaPipe does the swap
+    rightHandLandmarks: frame.rightHand ? frame.rightHand.map(p => ({ x: p[0], y: p[1], z: p[2] || 0 })) : null,
+    leftHandLandmarks: frame.leftHand ? frame.leftHand.map(p => ({ x: p[0], y: p[1], z: p[2] || 0 })) : null,
+  };
+
+  retarget.applyFromMediaPipe(avatar.vrm, fakeResults);
 }
 
 async function playSign(label) {
