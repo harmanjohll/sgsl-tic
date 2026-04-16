@@ -107,11 +107,27 @@ async function setupMediaPipe() {
 
 // ─── MediaPipe Results Handler ──────────────────────────────
 function onHolisticResults(results) {
+  // Debug: log result keys once to find world landmarks property name
+  if (!window._mpKeysLogged) {
+    window._mpKeysLogged = true;
+    console.log('[MP Debug] Result keys:', Object.keys(results));
+    console.log('[MP Debug] Has ea:', !!results.ea);
+    console.log('[MP Debug] Has za:', !!results.za);
+    console.log('[MP Debug] Has poseLandmarks:', !!results.poseLandmarks);
+    // Find world landmarks — it's a non-obvious property with world coords
+    for (const key of Object.keys(results)) {
+      const val = results[key];
+      if (Array.isArray(val) && val.length === 33 && val[0]?.visibility !== undefined) {
+        console.log(`[MP Debug] World landmarks found at key: "${key}"`);
+        console.log('[MP Debug] Sample:', JSON.stringify(val[0]));
+      }
+    }
+  }
+
   // Draw overlay on camera feed
   drawOverlay(results);
 
   // Live avatar preview via Kalidokit
-  // Pass raw MediaPipe results directly — Kalidokit handles coordinate mapping
   if (avatar?.vrm && retarget) {
     retarget.applyFromMediaPipe(avatar.vrm, results);
   }
