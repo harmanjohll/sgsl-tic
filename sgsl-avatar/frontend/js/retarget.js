@@ -197,25 +197,8 @@ export class SMPLXRetarget {
       expr.setValue('ou', lerp(m.U || 0, expr.getValue('ou') || 0, 0.5));
     }
 
-    // Pupil / eye look
-    if (riggedFace.pupil) {
-      const lookTarget = new THREE.Euler(
-        lerp(oldLookTarget.x, riggedFace.pupil.y, 0.4),
-        lerp(oldLookTarget.y, riggedFace.pupil.x, 0.4),
-        0,
-        'XYZ'
-      );
-      oldLookTarget.copy(lookTarget);
-
-      // three-vrm v3 lookAt
-      if (vrm.lookAt) {
-        const yaw = THREE.MathUtils.RAD2DEG * lookTarget.y;
-        const pitch = THREE.MathUtils.RAD2DEG * lookTarget.x;
-        vrm.lookAt.target = undefined;
-        vrm.lookAt.autoUpdate = false;
-        vrm.lookAt.applyYawPitch(yaw, pitch);
-      }
-    }
+    // Pupil / eye look — skip if VRM doesn't support it
+    // (applyYawPitch not available in all three-vrm versions)
   }
 
   // Kept for backward compatibility with player.js
