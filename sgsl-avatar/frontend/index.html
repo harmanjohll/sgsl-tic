@@ -9,24 +9,21 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 
-  <!-- MediaPipe Holistic -->
+  <!-- EXACT same library versions as the working Kalidokit demo -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.133.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.133.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.133.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@0.6.7/lib/three-vrm.js"></script>
+
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/holistic.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" crossorigin="anonymous"></script>
 
   <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/",
-      "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.3.3/lib/three-vrm.module.min.js",
-      "kalidokit": "https://cdn.jsdelivr.net/npm/kalidokit@1.1.5/dist/kalidokit.es.js"
-    }
-  }
+  { "imports": { "kalidokit": "https://cdn.jsdelivr.net/npm/kalidokit@1.1.5/dist/kalidokit.es.js" } }
   </script>
 </head>
 <body>
-
   <header class="header">
     <h1>SgSL Avatar</h1>
     <nav class="tabs">
@@ -35,13 +32,10 @@
     </nav>
   </header>
 
-  <!-- ====== VIEWER TAB ====== -->
   <main id="tab-viewer" class="main tab-content active">
     <aside class="sidebar">
       <h2 class="sidebar-title">Sign Library</h2>
-      <div id="sign-list" class="sign-list">
-        <p class="hint">Loading signs...</p>
-      </div>
+      <div id="sign-list" class="sign-list"><p class="hint">Loading signs...</p></div>
     </aside>
     <section class="viewer">
       <div id="avatar-viewport" class="viewport"></div>
@@ -62,7 +56,6 @@
     </section>
   </main>
 
-  <!-- ====== RECORD TAB ====== -->
   <main id="tab-record" class="main tab-content">
     <section class="record-panel">
       <h2 class="sidebar-title">Camera</h2>
