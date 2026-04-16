@@ -38,11 +38,11 @@ export class SMPLXAvatar {
     this.container.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 1000);
-    this.camera.position.set(0.0, 1.4, 0.7);
+    this.camera.position.set(0.0, 1.3, 2.5);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.screenSpacePanning = true;
-    this.controls.target.set(0.0, 1.4, 0.0);
+    this.controls.target.set(0.0, 1.1, 0.0);
     this.controls.update();
 
     this.scene = new THREE.Scene();

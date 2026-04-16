@@ -115,6 +115,12 @@ function onHolisticResults(results) {
     retarget.applyFromMediaPipe(avatar.vrm, results);
   }
 
+  // Debug: show what's happening on screen
+  const dbg = document.getElementById('rec-debug');
+  if (dbg && retarget._lastDebug) {
+    dbg.textContent = retarget._lastDebug;
+  }
+
   // Record frame data for storage (extract to our holistic format)
   const frame = extractFrame(results);
   if (recording && frame) {

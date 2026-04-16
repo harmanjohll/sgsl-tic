@@ -14,15 +14,20 @@ const lerp = Kalidokit.Vector.lerp;
 let oldLookTarget = new THREE.Euler();
 
 export class SMPLXRetarget {
-  constructor() {}
+  constructor() {
+    this._lastDebug = '';
+    this._debugCount = 0;
+  }
   reset() { oldLookTarget = new THREE.Euler(); }
 
-  /* ─── rigRotation: from demo, using getRawBoneNode ────── */
+  /* ─── rigRotation: try both bone access methods ────────── */
   _rigRotation(vrm, name, rotation = { x: 0, y: 0, z: 0 }, dampener = 1, lerpAmount = 0.3) {
     if (!vrm) return;
-    // three-vrm v3: getRawBoneNode with lowercase first char
     const boneName = name.charAt(0).toLowerCase() + name.slice(1);
-    const Part = vrm.humanoid.getRawBoneNode(boneName);
+
+    // Try getRawBoneNode first, then getNormalizedBoneNode
+    let Part = vrm.humanoid.getRawBoneNode(boneName);
+    if (!Part) Part = vrm.humanoid.getNormalizedBoneNode(boneName);
     if (!Part) return;
 
     let euler = new THREE.Euler(
@@ -76,6 +81,26 @@ export class SMPLXRetarget {
     const faceLandmarks = results.faceLandmarks;
     const pose3DLandmarks = results.za || results.ea;
     const pose2DLandmarks = results.poseLandmarks;
+
+    // Debug every 30 frames (~1 second)
+    this._debugCount++;
+    const doDebug = (this._debugCount % 30 === 0);
+    if (doDebug) {
+      const boneName = 'rightUpperArm';
+      const rawBone = vrm.humanoid.getRawBoneNode(boneName);
+      const normBone = vrm.humanoid.getNormalizedBoneNode(boneName);
+      const lines = [
+        `Frame: ${this._debugCount}`,
+        `pose3D: ${pose3DLandmarks ? pose3DLandmarks.length + ' landmarks' : 'NULL'}`,
+        `pose2D: ${pose2DLandmarks ? pose2DLandmarks.length + ' landmarks' : 'NULL'}`,
+        `face: ${faceLandmarks ? faceLandmarks.length + ' landmarks' : 'NULL'}`,
+        `rightHand(MP): ${results.leftHandLandmarks ? 'yes' : 'no'}`,
+        `leftHand(MP): ${results.rightHandLandmarks ? 'yes' : 'no'}`,
+        `getRawBoneNode('${boneName}'): ${rawBone ? rawBone.name : 'NULL'}`,
+        `getNormalizedBoneNode('${boneName}'): ${normBone ? normBone.name : 'NULL'}`,
+      ];
+      this._lastDebug = lines.join('\n');
+    }
     const leftHandLandmarks = results.rightHandLandmarks;
     const rightHandLandmarks = results.leftHandLandmarks;
 
@@ -88,6 +113,12 @@ export class SMPLXRetarget {
       riggedPose = Kalidokit.Pose.solve(pose3DLandmarks, pose2DLandmarks, { runtime: "mediapipe", video: document.getElementById('rec-video') });
 
       if (riggedPose) {
+        if (doDebug) {
+          const rua = riggedPose.RightUpperArm;
+          this._lastDebug += `\nKalidokit RightUpperArm: x=${rua?.x?.toFixed(2)} y=${rua?.y?.toFixed(2)} z=${rua?.z?.toFixed(2)}`;
+          const lua = riggedPose.LeftUpperArm;
+          this._lastDebug += `\nKalidokit LeftUpperArm: x=${lua?.x?.toFixed(2)} y=${lua?.y?.toFixed(2)} z=${lua?.z?.toFixed(2)}`;
+        }
         this._rigRotation(vrm, "Hips", riggedPose.Hips.rotation, 0.7);
         this._rigRotation(vrm, "Chest", riggedPose.Spine, 0.25, 0.3);
         this._rigRotation(vrm, "Spine", riggedPose.Spine, 0.45, 0.3);
