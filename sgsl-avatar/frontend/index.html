@@ -9,16 +9,24 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 
-  <!-- MediaPipe Holistic (for recording) -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/holistic.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+  <!-- ═══ Dependencies: EXACT versions from Kalidokit demo ═══ -->
+  <!-- Three.js 0.133.0 (global script, NOT ES module) -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.133.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.133.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.133.0/examples/js/controls/OrbitControls.js"></script>
 
+  <!-- three-vrm 0.6.7 (attaches to global THREE, same as demo) -->
+  <script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@0.6.7/lib/three-vrm.js"></script>
+
+  <!-- MediaPipe Holistic (same version as demo) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1635989137/holistic.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" crossorigin="anonymous"></script>
+
+  <!-- Kalidokit (ES module) -->
   <script type="importmap">
   {
     "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/",
-      "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.3.3/lib/three-vrm.module.min.js",
       "kalidokit": "https://cdn.jsdelivr.net/npm/kalidokit@1.1.5/dist/kalidokit.es.js"
     }
   }
@@ -67,7 +75,6 @@
 
   <!-- ====== RECORD TAB ====== -->
   <main id="tab-record" class="main tab-content">
-    <!-- Left: Camera + controls -->
     <section class="record-panel">
       <h2 class="sidebar-title">Camera</h2>
       <div class="camera-container">
@@ -90,7 +97,6 @@
         <div id="rec-timer" class="rec-timer"></div>
       </div>
 
-      <!-- Quality gate results -->
       <div id="quality-panel" class="quality-panel hidden">
         <h3 class="quality-title">Quality Check</h3>
         <div id="quality-scores" class="quality-scores"></div>
@@ -105,7 +111,6 @@
       <div id="rec-status" class="status status-info">Enter a sign label and click Record.</div>
     </section>
 
-    <!-- Right: Live avatar preview -->
     <section class="viewer">
       <div id="rec-avatar-viewport" class="viewport"></div>
       <div id="rec-avatar-status" class="status status-info">Avatar will mirror your signing in real-time.</div>
