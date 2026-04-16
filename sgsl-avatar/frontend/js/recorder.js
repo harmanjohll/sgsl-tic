@@ -134,6 +134,7 @@ function extractFrame(results) {
     leftHand: null,
     face: null,
     pose: null,
+    poseWorld: null,  // World-space 3D landmarks — CRITICAL for Kalidokit playback
   };
 
   // Right hand (21 landmarks)
@@ -146,17 +147,20 @@ function extractFrame(results) {
     frame.leftHand = results.leftHandLandmarks.map(lm => [lm.x, lm.y, lm.z]);
   }
 
-  // Pose (33 landmarks)
+  // Pose — screen-space 2D landmarks (33 points)
   if (results.poseLandmarks) {
     frame.pose = results.poseLandmarks.map(lm => [lm.x, lm.y, lm.z, lm.visibility ?? 0]);
   }
 
-  // Face (32 key points from 468 mesh)
+  // Pose — world-space 3D landmarks (results.za in MediaPipe v0.5)
+  const poseWorld = results.za || results.ea;
+  if (poseWorld) {
+    frame.poseWorld = poseWorld.map(lm => [lm.x, lm.y, lm.z, lm.visibility ?? 0]);
+  }
+
+  // Face — store ALL 478 landmarks (Kalidokit needs the full set)
   if (results.faceLandmarks && results.faceLandmarks.length >= 468) {
-    frame.face = FACE_KEYS.map(idx => {
-      const lm = results.faceLandmarks[idx];
-      return lm ? [lm.x, lm.y, lm.z] : [0, 0, 0];
-    });
+    frame.face = results.faceLandmarks.map(lm => [lm.x, lm.y, lm.z]);
   }
 
   return frame;
@@ -207,6 +211,31 @@ function drawOverlay(results) {
       }
     }
   }
+
+  // Reference guide: signing space outline
+  // Shows the optimal area where signer should be positioned
+  ctx.strokeStyle = 'rgba(100, 140, 220, 0.3)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 5]);
+  // Head area
+  const cx = canvas.width * 0.5, headY = canvas.height * 0.12;
+  ctx.beginPath();
+  ctx.ellipse(cx, headY + canvas.height * 0.08, canvas.width * 0.08, canvas.height * 0.08, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  // Shoulder line
+  const shW = canvas.width * 0.22;
+  ctx.beginPath();
+  ctx.moveTo(cx - shW, canvas.height * 0.28);
+  ctx.lineTo(cx + shW, canvas.height * 0.28);
+  ctx.stroke();
+  // Signing space box (where hands should be for signs)
+  ctx.strokeStyle = 'rgba(100, 220, 140, 0.25)';
+  ctx.strokeRect(cx - canvas.width * 0.3, canvas.height * 0.05, canvas.width * 0.6, canvas.height * 0.7);
+  ctx.setLineDash([]);
+  // Label
+  ctx.fillStyle = 'rgba(100, 220, 140, 0.4)';
+  ctx.font = '11px Inter, sans-serif';
+  ctx.fillText('Signing space', cx - 35, canvas.height * 0.05 + 14);
 
   // Draw pose connections (arms only)
   if (results.poseLandmarks) {

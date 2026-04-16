@@ -110,17 +110,25 @@ function tick() {
 function renderFrame(frame) {
   if (!avatar?.vrm || !retarget || !frame) return;
 
-  // Convert stored holistic frame to MediaPipe-like results object
-  // so Kalidokit can process it via applyFromMediaPipe
+  // Convert stored holistic frame back to MediaPipe-like results
+  // for Kalidokit processing.
+  //
+  // Key: Kalidokit.Pose.solve() needs BOTH:
+  //   arg1: pose3DWorld (world-space, from results.za)
+  //   arg2: pose2DScreen (screen-space, from results.poseLandmarks)
+  // Without world landmarks, pose solving returns garbage.
+  //
+  // Kalidokit.Face.solve() needs ALL 478 face landmarks.
+  // Kalidokit internally swaps left/right hands, so we store as-is.
+
+  const toMP = (arr) => arr ? arr.map(p => ({ x: p[0], y: p[1], z: p[2] || 0, visibility: p[3] || 0 })) : null;
+
   const fakeResults = {
-    poseLandmarks: frame.pose ? frame.pose.map(p => ({ x: p[0], y: p[1], z: p[2], visibility: p[3] || 0 })) : null,
-    // World landmarks: use pose data as approximation (stored frames don't have separate world landmarks)
-    za: frame.pose ? frame.pose.map(p => ({ x: p[0], y: p[1], z: p[2], visibility: p[3] || 0 })) : null,
-    faceLandmarks: frame.face ? frame.face.map(p => ({ x: p[0], y: p[1], z: p[2] })) : null,
-    // Hands are stored in our format (arrays of [x,y,z]), convert to MediaPipe format
-    // Note: hands are NOT swapped here — applyFromMediaPipe does the swap
-    rightHandLandmarks: frame.rightHand ? frame.rightHand.map(p => ({ x: p[0], y: p[1], z: p[2] || 0 })) : null,
-    leftHandLandmarks: frame.leftHand ? frame.leftHand.map(p => ({ x: p[0], y: p[1], z: p[2] || 0 })) : null,
+    poseLandmarks: toMP(frame.pose),
+    za: toMP(frame.poseWorld || frame.pose),  // Use world landmarks if stored, fall back to screen
+    faceLandmarks: toMP(frame.face),
+    rightHandLandmarks: toMP(frame.rightHand),
+    leftHandLandmarks: toMP(frame.leftHand),
   };
 
   retarget.applyFromMediaPipe(avatar.vrm, fakeResults);

@@ -33,12 +33,13 @@ export class SMPLXAvatar {
     this.container.innerHTML = '';
     this.container.appendChild(this.renderer.domElement);
 
-    this.camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 1000);
-    this.camera.position.set(0.0, 1.4, 0.7);
+    this.camera = new THREE.PerspectiveCamera(30, w / h, 0.1, 1000);
+    // Zoom out so full upper body + arms are visible for signing
+    this.camera.position.set(0.0, 1.35, 1.8);
 
     this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
     this.controls.screenSpacePanning = true;
-    this.controls.target.set(0.0, 1.4, 0.0);
+    this.controls.target.set(0.0, 1.2, 0.0);
     this.controls.update();
 
     this.scene = new THREE.Scene();
@@ -85,6 +86,9 @@ export class SMPLXAvatar {
           this.vrm = vrm;
           this.vrm.scene.rotation.y = Math.PI;
 
+          // Set arms at sides (VRM default is T-pose)
+          this._setRestPose(vrm);
+
           if (this._statusEl) { this._statusEl.remove(); this._statusEl = null; }
           this.loaded = true;
           console.log('[Avatar] VRM 0.x loaded');
@@ -96,6 +100,21 @@ export class SMPLXAvatar {
         if (this._statusEl) this._statusEl.textContent = 'Failed to load avatar.vrm';
       }
     );
+  }
+
+  _setRestPose(vrm) {
+    // Rotate arms from T-pose to natural at-sides position
+    const BN = THREE.VRMSchema.HumanoidBoneName;
+    const rua = vrm.humanoid.getBoneNode(BN.RightUpperArm);
+    const lua = vrm.humanoid.getBoneNode(BN.LeftUpperArm);
+    if (rua) rua.rotation.z = -1.2;  // right arm down
+    if (lua) lua.rotation.z = 1.2;   // left arm down
+
+    // Slight elbow bend
+    const rla = vrm.humanoid.getBoneNode(BN.RightLowerArm);
+    const lla = vrm.humanoid.getBoneNode(BN.LeftLowerArm);
+    if (rla) rla.rotation.y = 0.15;
+    if (lla) lla.rotation.y = -0.15;
   }
 
   setPlaying() {}
