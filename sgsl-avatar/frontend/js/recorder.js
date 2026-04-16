@@ -113,12 +113,23 @@ function onHolisticResults(results) {
   // Draw overlay on camera feed
   drawOverlay(results);
 
-  // Live avatar preview
+  // Live avatar preview + facial expressions
   if (avatar?.loaded && frame) {
     const data = avatar.renderFrame(frame);
     if (data) {
-      retarget.applyFrame(data.bones, data.restPose, frame, avatar.getCalibration());
+      const expressions = retarget.applyFrame(data.bones, data.restPose, frame, avatar.getCalibration());
       avatar.updateVisuals();
+
+      // Apply facial expressions to VRM
+      if (expressions) {
+        if (expressions.browRaise > 0.1) avatar.setExpression('surprised', expressions.browRaise * 0.5);
+        if (expressions.mouthOpen > 0.1) avatar.setExpression('aa', expressions.mouthOpen);
+        if (expressions.smile > 0.2) avatar.setExpression('happy', expressions.smile * 0.6);
+        if (expressions.blink > 0.5) {
+          avatar.setExpression('blinkLeft', expressions.blink);
+          avatar.setExpression('blinkRight', expressions.blink);
+        }
+      }
     }
   }
 
@@ -186,6 +197,27 @@ function drawOverlay(results) {
 
   drawHand(results.rightHandLandmarks, '#00ff88');
   drawHand(results.leftHandLandmarks, '#ff8800');
+
+  // Draw face landmarks
+  if (results.faceLandmarks) {
+    ctx.fillStyle = 'rgba(136, 170, 238, 0.6)';
+    // Draw key face points (brows, eyes, nose, mouth)
+    const faceKeys = [
+      10, 67, 109, 338, 297,     // brows
+      159, 145, 386, 374,         // eyes
+      1, 4,                        // nose
+      61, 291, 13, 14,            // mouth
+      33, 133, 362, 263,          // eye corners
+    ];
+    for (const idx of faceKeys) {
+      const lm = results.faceLandmarks[idx];
+      if (lm) {
+        ctx.beginPath();
+        ctx.arc(lm.x * canvas.width, lm.y * canvas.height, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
 
   // Draw pose connections (arms only)
   if (results.poseLandmarks) {
