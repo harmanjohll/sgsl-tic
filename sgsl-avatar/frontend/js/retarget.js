@@ -44,7 +44,9 @@ export class SMPLXRetarget {
     if (!vrm?.humanoid) return;
 
     const pose = mpResults.poseLandmarks;
-    const poseWorld = mpResults.ea; // world landmarks (used by Kalidokit)
+    // World landmarks: property name varies by MediaPipe version
+    // v0.5 uses 'za', older versions use 'ea'
+    const poseWorld = mpResults.za || mpResults.ea;
     const face = mpResults.faceLandmarks;
     const leftHand = mpResults.leftHandLandmarks;
     const rightHand = mpResults.rightHandLandmarks;
