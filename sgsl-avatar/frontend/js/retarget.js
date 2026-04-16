@@ -121,30 +121,29 @@ export class SMPLXRetarget {
 
     const pS = pose[sIdx], pE = pose[eIdx], pW = pose[wIdx];
 
-    // MediaPipe pose: x=0..1 (selfie mirrored), y=0..1 (top→bottom), z=depth
-    // VRM world: x=right(+), y=up(+), z=forward toward camera(+)
-    // Selfie mirror: signer's LEFT appears on RIGHT of image
-    // So MediaPipe x maps to avatar's -x for left side, +x for right side
+    // MediaPipe selfie mode coordinates:
+    //   x: 0=left of image, 1=right of image (mirrored: your right hand appears on left)
+    //   y: 0=top, 1=bottom
+    //   z: depth (positive = toward camera)
+    //
+    // VRM avatar faces -Z (toward camera). In world space:
+    //   x: right(+), y: up(+), z: toward camera(+)
+    //
+    // Mirror mapping: negate x so avatar mirrors you like a reflection
+    // Negate y because MediaPipe y goes down but world y goes up
+    // Negate z with damping because depth is noisy
 
-    // Shoulder → elbow direction in world space
     const dx = pE[0] - pS[0];
     const dy = pE[1] - pS[1];
-    const dz = ((pE[2] ?? 0) - (pS[2] ?? 0));
+    const dz = (pE[2] ?? 0) - (pS[2] ?? 0);
 
-    // Transform to avatar world space:
-    // - Negate x (mirror) then negate again for selfie = keep sign
-    //   Actually: in selfie mode, left shoulder is at high x, right at low x
-    //   Avatar's left arm should go left (-x), right arm should go right (+x)
-    //   MediaPipe: left_shoulder.x > right_shoulder.x (selfie mirror)
-    //   So dx for left arm (elbow - shoulder) is negative when elbow is further left = correct
-    //   We just negate Y (MediaPipe y goes down, world y goes up)
-    const uDir = new THREE.Vector3(dx, -dy, -dz * 0.3).normalize();
+    const uDir = new THREE.Vector3(-dx, -dy, -dz * 0.4).normalize();
 
-    // Elbow → wrist direction
     const dx2 = pW[0] - pE[0];
     const dy2 = pW[1] - pE[1];
-    const dz2 = ((pW[2] ?? 0) - (pE[2] ?? 0));
-    const fDir = new THREE.Vector3(dx2, -dy2, -dz2 * 0.3).normalize();
+    const dz2 = (pW[2] ?? 0) - (pE[2] ?? 0);
+
+    const fDir = new THREE.Vector3(-dx2, -dy2, -dz2 * 0.4).normalize();
 
     if (uDir.length() < 0.001 || fDir.length() < 0.001) return;
 
@@ -182,7 +181,8 @@ export class SMPLXRetarget {
 
   _lmToWorld(lm) {
     const scale = 1.0;
-    const x = (lm[0] - 0.5) * scale; // no mirror flip for fallback
+    // Negate x for mirror: your right hand on left of screen → avatar's right on her right
+    const x = -(lm[0] - 0.5) * scale;
     const y = (0.5 - lm[1]) * scale + 1.1;
     const z = -(lm[2] ?? 0) * 0.3 + 0.25;
     return new THREE.Vector3(x, y, z);
@@ -266,14 +266,15 @@ export class SMPLXRetarget {
 
     const eMX = (lE[0] + rE[0]) / 2;
     const eD = Math.abs(lE[0] - rE[0]) || 0.1;
-    const yaw = ((nose[0] - eMX) / eD) * 0.6;
-    const pitch = ((nose[1] - (lE[1] + rE[1]) / 2) / eD) * 0.4;
-    const roll = Math.atan2(rE[1] - lE[1], rE[0] - lE[0]) * 0.5;
+    // Negate yaw and roll for mirror effect (your left turn = avatar mirrors it)
+    const yaw = -((nose[0] - eMX) / eD) * 1.2;
+    const pitch = ((nose[1] - (lE[1] + rE[1]) / 2) / eD) * 0.8;
+    const roll = -Math.atan2(rE[1] - lE[1], rE[0] - lE[0]) * 1.0;
 
     const cl = (v, l) => Math.max(-l, Math.min(l, isFinite(v) ? v : 0));
-    bone.rotateY(cl(yaw, 0.8));
-    bone.rotateX(cl(pitch, 0.6));
-    bone.rotateZ(cl(roll, 0.4));
+    bone.rotateY(cl(yaw, 1.0));
+    bone.rotateX(cl(pitch, 0.8));
+    bone.rotateZ(cl(roll, 0.6));
     bone.quaternion.copy(this._qf('head', 1.5, 0.02).filter(bone.quaternion, this._time));
   }
 
