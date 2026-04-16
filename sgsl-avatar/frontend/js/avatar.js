@@ -217,9 +217,6 @@ export class SMPLXAvatar {
           this._statusEl = null;
         }
 
-        // Set natural rest pose: arms at sides instead of T-pose
-        this._setArmsAtSides();
-
         this.loaded = true;
         const boneCount = Object.keys(this.bones).filter(k => this.bones[k]).length;
         console.log(`[Avatar] VRM loaded: ${boneCount} bones mapped`);
