@@ -35,14 +35,19 @@ export class SMPLXRetarget {
     if (!rotation) return;
     // three-vrm v3: bone names are lowercase-first (rightUpperArm, not RightUpperArm)
     const name = boneName.charAt(0).toLowerCase() + boneName.slice(1);
-    const bone = vrm.humanoid?.getNormalizedBoneNode(name);
+    // Use getRawBoneNode — getNormalizedBoneNode applies VRM normalization
+    // which double-transforms when combined with Kalidokit's angles
+    const bone = vrm.humanoid?.getRawBoneNode(name);
     if (!bone) return;
 
+    // VRM 1.0 / three-vrm v3: negate Y and Z axes
+    // (coordinate convention differs from VRM 0.x used in Kalidokit demo)
+    // Rotation order YXZ (not XYZ) per OreChat reference implementation
     const euler = new THREE.Euler(
       (rotation.x || 0) * dampener,
-      (rotation.y || 0) * dampener,
-      (rotation.z || 0) * dampener,
-      rotation.rotationOrder || 'XYZ'
+      -(rotation.y || 0) * dampener,
+      -(rotation.z || 0) * dampener,
+      'YXZ'
     );
     const quaternion = new THREE.Quaternion().setFromEuler(euler);
     bone.quaternion.slerp(quaternion, lerpAmount);
@@ -51,7 +56,7 @@ export class SMPLXRetarget {
   _rigPosition(vrm, boneName, position, dampener = 1, lerpAmount = 0.3) {
     if (!position) return;
     const name = boneName.charAt(0).toLowerCase() + boneName.slice(1);
-    const bone = vrm.humanoid?.getNormalizedBoneNode(name);
+    const bone = vrm.humanoid?.getRawBoneNode(name);
     if (!bone) return;
 
     const vector = new THREE.Vector3(
