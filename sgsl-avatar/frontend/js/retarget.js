@@ -59,24 +59,17 @@ export class SMPLXRetarget {
       });
 
       if (riggedPose) {
-        this._applyRotation(vrm, 'hips', riggedPose.Hips.rotation, 0.4);
-        this._applyPosition(vrm, 'hips', {
-          x: riggedPose.Hips.position.x,
-          y: riggedPose.Hips.position.y + 1,
-          z: -riggedPose.Hips.position.z,
-        }, 0.07);
-        this._applyRotation(vrm, 'chest', riggedPose.Spine, 0.5);
-        this._applyRotation(vrm, 'spine', riggedPose.Spine, 0.3);
+        // Hips: only rotation, NO position (keep avatar planted for signing)
+        this._applyRotation(vrm, 'hips', riggedPose.Hips.rotation, 0.3);
+        this._applyRotation(vrm, 'chest', riggedPose.Spine, 0.3);
+        this._applyRotation(vrm, 'spine', riggedPose.Spine, 0.2);
 
         this._applyRotation(vrm, 'rightUpperArm', riggedPose.RightUpperArm, SMOOTH);
         this._applyRotation(vrm, 'rightLowerArm', riggedPose.RightLowerArm, SMOOTH);
         this._applyRotation(vrm, 'leftUpperArm', riggedPose.LeftUpperArm, SMOOTH);
         this._applyRotation(vrm, 'leftLowerArm', riggedPose.LeftLowerArm, SMOOTH);
 
-        this._applyRotation(vrm, 'rightUpperLeg', riggedPose.RightUpperLeg, 0.3);
-        this._applyRotation(vrm, 'rightLowerLeg', riggedPose.RightLowerLeg, 0.3);
-        this._applyRotation(vrm, 'leftUpperLeg', riggedPose.LeftUpperLeg, 0.3);
-        this._applyRotation(vrm, 'leftLowerLeg', riggedPose.LeftLowerLeg, 0.3);
+        // No leg rotation — signer is standing still
       }
     }
 

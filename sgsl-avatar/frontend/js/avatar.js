@@ -217,6 +217,9 @@ export class SMPLXAvatar {
           this._statusEl = null;
         }
 
+        // Set natural rest pose: arms at sides instead of T-pose
+        this._setArmsAtSides();
+
         this.loaded = true;
         const boneCount = Object.keys(this.bones).filter(k => this.bones[k]).length;
         console.log(`[Avatar] VRM loaded: ${boneCount} bones mapped`);
@@ -308,6 +311,31 @@ export class SMPLXAvatar {
       this.controls.target.set(0, camY, 0);
       this.controls.update();
     }
+  }
+
+  // ─── Arms at sides (natural rest pose) ─────────────────────
+
+  _setArmsAtSides() {
+    if (!this.vrm?.humanoid) return;
+    const h = this.vrm.humanoid;
+
+    // Rotate upper arms down from T-pose to natural sides
+    // VRM T-pose: arms pointing straight out (X axis)
+    // Natural: arms hanging down (rotate ~75° toward body)
+    const armAngle = 1.2; // radians (~69°)
+
+    const rua = h.getNormalizedBoneNode('rightUpperArm');
+    const lua = h.getNormalizedBoneNode('leftUpperArm');
+    if (rua) rua.rotation.z = armAngle;   // rotate right arm down
+    if (lua) lua.rotation.z = -armAngle;  // rotate left arm down
+
+    // Slight elbow bend for natural look
+    const rla = h.getNormalizedBoneNode('rightLowerArm');
+    const lla = h.getNormalizedBoneNode('leftLowerArm');
+    if (rla) rla.rotation.y = -0.15;
+    if (lla) lla.rotation.y = 0.15;
+
+    console.log('[Avatar] Arms set to natural rest pose');
   }
 
   // ─── Idle breathing ───────────────────────────────────────
