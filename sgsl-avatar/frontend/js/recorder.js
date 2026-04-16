@@ -107,33 +107,17 @@ async function setupMediaPipe() {
 
 // ─── MediaPipe Results Handler ──────────────────────────────
 function onHolisticResults(results) {
-  // Extract holistic frame
-  const frame = extractFrame(results);
-
   // Draw overlay on camera feed
   drawOverlay(results);
 
-  // Live avatar preview + facial expressions
-  if (avatar?.loaded && frame) {
-    const data = avatar.renderFrame(frame);
-    if (data) {
-      const expressions = retarget.applyFrame(data.bones, data.restPose, frame, avatar.getCalibration());
-      avatar.updateVisuals();
-
-      // Apply facial expressions to VRM
-      if (expressions) {
-        if (expressions.browRaise > 0.1) avatar.setExpression('surprised', expressions.browRaise * 0.5);
-        if (expressions.mouthOpen > 0.1) avatar.setExpression('aa', expressions.mouthOpen);
-        if (expressions.smile > 0.2) avatar.setExpression('happy', expressions.smile * 0.6);
-        if (expressions.blink > 0.5) {
-          avatar.setExpression('blinkLeft', expressions.blink);
-          avatar.setExpression('blinkRight', expressions.blink);
-        }
-      }
-    }
+  // Live avatar preview via Kalidokit
+  // Pass raw MediaPipe results directly — Kalidokit handles coordinate mapping
+  if (avatar?.vrm && retarget) {
+    retarget.applyFromMediaPipe(avatar.vrm, results);
   }
 
-  // Record frame if recording
+  // Record frame data for storage (extract to our holistic format)
+  const frame = extractFrame(results);
   if (recording && frame) {
     frames.push(frame);
   }

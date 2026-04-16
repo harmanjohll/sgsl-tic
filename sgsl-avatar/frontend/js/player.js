@@ -195,17 +195,40 @@ async function init() {
     if (list) {
       list.innerHTML = '';
       for (const s of signs) {
+        const row = document.createElement('div');
+        row.className = 'sign-row';
+
         const btn = document.createElement('button');
         btn.className = 'sign-btn';
         btn.textContent = s.label;
         btn.title = `${s.frames} frames`;
         btn.addEventListener('click', () => {
-          // Highlight active
           list.querySelectorAll('.sign-btn').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
           playSign(s.label);
         });
-        list.appendChild(btn);
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'sign-del';
+        delBtn.textContent = '\u00d7';
+        delBtn.title = `Delete "${s.label}"`;
+        delBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!confirm(`Delete sign "${s.label}"?`)) return;
+          try {
+            const res = await fetch(`/api/sign/${s.label}`, { method: 'DELETE' });
+            if (res.ok) {
+              row.remove();
+              setStatus(`"${s.label}" deleted.`, 'info');
+            }
+          } catch (err) {
+            setStatus(`Delete failed: ${err.message}`, 'error');
+          }
+        });
+
+        row.appendChild(btn);
+        row.appendChild(delBtn);
+        list.appendChild(row);
       }
     }
     setStatus(`${signs.length} signs loaded. Click one to play.`, 'success');

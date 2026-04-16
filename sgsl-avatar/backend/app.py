@@ -60,6 +60,19 @@ async def get_sign(label: str):
     return JSONResponse(content=data)
 
 
+@app.delete("/api/sign/{label}")
+async def delete_sign(label: str):
+    """Delete a sign from the library."""
+    safe_label = "".join(c for c in label if c.isalnum() or c in ('_', '-')).strip()
+    sign_path = SIGNS_DIR / f"{safe_label}.json"
+    if not sign_path.exists():
+        raise HTTPException(status_code=404, detail=f"Sign '{safe_label}' not found")
+    sign_path.unlink()
+    _rebuild_manifest()
+    print(f"[Delete] Sign '{safe_label}' removed")
+    return JSONResponse(content={"status": "ok", "label": safe_label})
+
+
 def _rebuild_manifest():
     """Rebuild the manifest from all sign JSON files."""
     signs = []

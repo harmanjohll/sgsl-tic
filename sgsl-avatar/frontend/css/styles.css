@@ -90,6 +90,17 @@ html, body {
   color: #fff;
   border-color: var(--accent-bright);
 }
+.sign-row {
+  display: flex; gap: 4px; align-items: stretch;
+}
+.sign-row .sign-btn { flex: 1; }
+.sign-del {
+  background: transparent; border: 1px solid transparent;
+  color: var(--text-dim); font-size: 16px; cursor: pointer;
+  padding: 0 6px; border-radius: 4px; line-height: 1;
+  transition: color 0.15s, background 0.15s;
+}
+.sign-del:hover { color: var(--error); background: rgba(238,102,102,0.15); }
 
 /* Viewer */
 .viewer {
