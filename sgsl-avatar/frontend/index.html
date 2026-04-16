@@ -9,24 +9,17 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 
-  <!-- ═══ Dependencies: EXACT versions from Kalidokit demo ═══ -->
-  <!-- Three.js 0.133.0 (global script, NOT ES module) -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.133.0/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.133.0/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.133.0/examples/js/controls/OrbitControls.js"></script>
-
-  <!-- three-vrm 0.6.7 (attaches to global THREE, same as demo) -->
-  <script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@0.6.7/lib/three-vrm.js"></script>
-
-  <!-- MediaPipe Holistic (same version as demo) -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1635989137/holistic.js" crossorigin="anonymous"></script>
+  <!-- MediaPipe Holistic -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/holistic.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" crossorigin="anonymous"></script>
 
-  <!-- Kalidokit (ES module) -->
   <script type="importmap">
   {
     "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/",
+      "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.3.3/lib/three-vrm.module.min.js",
       "kalidokit": "https://cdn.jsdelivr.net/npm/kalidokit@1.1.5/dist/kalidokit.es.js"
     }
   }
@@ -50,20 +43,16 @@
         <p class="hint">Loading signs...</p>
       </div>
     </aside>
-
     <section class="viewer">
       <div id="avatar-viewport" class="viewport"></div>
       <div class="controls">
-        <div class="progress-bar">
-          <div id="progress-fill" class="progress-fill"></div>
-        </div>
+        <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
         <div class="control-row">
           <button id="btn-replay" class="btn">Replay</button>
           <button id="btn-pause" class="btn">Pause</button>
           <button id="btn-stop" class="btn">Stop</button>
           <span id="frame-info" class="frame-info">0 / 0</span>
-          <label class="speed-control">
-            Speed:
+          <label class="speed-control">Speed:
             <input type="range" id="speed-slider" min="0.2" max="3" step="0.1" value="1">
             <span id="speed-label">1.0x</span>
           </label>
@@ -82,21 +71,17 @@
         <canvas id="rec-overlay" class="rec-overlay"></canvas>
         <div id="rec-camera-status" class="camera-status">Camera loading...</div>
       </div>
-
       <div class="rec-controls">
         <div class="rec-label-row">
           <label for="rec-label">Sign label:</label>
           <input type="text" id="rec-label" class="rec-input" placeholder="e.g. hello, thank_you">
         </div>
-
         <div class="rec-btn-row">
           <button id="btn-rec-start" class="btn btn-record">Record</button>
           <button id="btn-rec-stop" class="btn" disabled>Stop</button>
         </div>
-
         <div id="rec-timer" class="rec-timer"></div>
       </div>
-
       <div id="quality-panel" class="quality-panel hidden">
         <h3 class="quality-title">Quality Check</h3>
         <div id="quality-scores" class="quality-scores"></div>
@@ -107,10 +92,8 @@
           <button id="btn-rec-discard" class="btn btn-discard">Discard</button>
         </div>
       </div>
-
       <div id="rec-status" class="status status-info">Enter a sign label and click Record.</div>
     </section>
-
     <section class="viewer">
       <div id="rec-avatar-viewport" class="viewport"></div>
       <div id="rec-avatar-status" class="status status-info">Avatar will mirror your signing in real-time.</div>
