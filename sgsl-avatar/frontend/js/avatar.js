@@ -192,8 +192,10 @@ export class SMPLXAvatar {
           return;
         }
 
-        // Rotate model to face camera (VRM faces +Z by default)
-        VRMUtils.rotateVRM0(vrm);
+        // Rotate model to face camera — use scene rotation like the
+        // Kalidokit demo does (NOT VRMUtils.rotateVRM0 which may
+        // affect bone coordinate system)
+        vrm.scene.rotation.y = Math.PI;
 
         this.vrm = vrm;
         this.scene.add(vrm.scene);
