@@ -154,20 +154,26 @@ export class SMPLXRetarget {
       ? this._countVisible(pose2DLandmarks) >= POSE_MIN_VISIBLE_LMS
       : false;
 
-    // Per-arm visibility. MediaPipe returns pose landmarks even for
-    // limbs that are off-frame, but the (x,y,z) are extrapolated from
-    // the visible torso — Kalidokit then returns plausible-looking
-    // garbage. Gate per-arm on elbow + wrist confidence so the avatar
-    // only moves an arm we actually saw.
-    const ARM_VIS_THRESH = 0.5;
+    // Per-arm trust gate. MediaPipe returns pose landmarks even for
+    // limbs that are off-frame (coordinates are extrapolated from the
+    // visible torso), so we can't write every arm unconditionally.
+    //
+    // But we also can't require both elbow AND wrist visibility: on
+    // a laptop webcam, raising a hand to signing height puts the
+    // wrist in frame while the elbow drops off the bottom. Requiring
+    // both would make the avatar ignore every one-hand sign.
+    //
+    // So: trust an arm if MediaPipe detected that hand (hand
+    // detection is far more reliable than pose-elbow visibility), OR
+    // the wrist landmark has decent visibility as a fallback for the
+    // no-hand-raised case.
+    const WRIST_VIS_THRESH = 0.5;
     const vis = (i) => pose2DLandmarks?.[i]?.visibility ?? 0;
-    // MediaPipe pose: 13 L-elbow, 14 R-elbow, 15 L-wrist, 16 R-wrist.
-    // MediaPipe reports sides as the camera sees them; Kalidokit/the
-    // signer think in terms of the signer's own sides. Handoff swap
-    // already happens for hands above; arm landmarks need the same
-    // mental flip here: MP "left" (13/15) → signer's right.
-    const signerRightArmOk = vis(13) >= ARM_VIS_THRESH && vis(15) >= ARM_VIS_THRESH;
-    const signerLeftArmOk  = vis(14) >= ARM_VIS_THRESH && vis(16) >= ARM_VIS_THRESH;
+    const handDetected = (lms) =>
+      lms && this._countVisible(lms, 0) >= HAND_MIN_VISIBLE_LMS;
+    // MediaPipe pose wrist indices: 15 = signer's right, 16 = signer's left.
+    const signerRightArmOk = handDetected(rightHandLandmarks) || vis(15) >= WRIST_VIS_THRESH;
+    const signerLeftArmOk  = handDetected(leftHandLandmarks)  || vis(16) >= WRIST_VIS_THRESH;
 
     if (poseVisible && pose3DLandmarks) {
       riggedPose = Kalidokit.Pose.solve(pose3DLandmarks, pose2DLandmarks, solveOpts);
@@ -200,19 +206,15 @@ export class SMPLXRetarget {
       }
     }
 
-    // Hand writes are tied to that arm's visibility: a hand rotation
-    // needs `riggedPose[Side]Hand.z` for the wrist twist, which is
-    // hallucinated garbage if the arm wasn't actually seen.
-    if (signerLeftArmOk && leftHandLandmarks
-        && this._countVisible(leftHandLandmarks, 0) >= HAND_MIN_VISIBLE_LMS
-        && riggedPose) {
+    // Hand writes require the hand itself to have been detected.
+    // We don't re-gate on arm visibility here: if the hand was seen,
+    // the wrist bone is trustworthy.
+    if (handDetected(leftHandLandmarks) && riggedPose) {
       riggedLeftHand = Kalidokit.Hand.solve(leftHandLandmarks, "Left");
       this._writeHand(vrm, "Left", riggedPose, riggedLeftHand);
     }
 
-    if (signerRightArmOk && rightHandLandmarks
-        && this._countVisible(rightHandLandmarks, 0) >= HAND_MIN_VISIBLE_LMS
-        && riggedPose) {
+    if (handDetected(rightHandLandmarks) && riggedPose) {
       riggedRightHand = Kalidokit.Hand.solve(rightHandLandmarks, "Right");
       this._writeHand(vrm, "Right", riggedPose, riggedRightHand);
     }
