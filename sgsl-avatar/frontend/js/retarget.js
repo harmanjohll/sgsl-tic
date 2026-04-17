@@ -169,11 +169,11 @@ export class SMPLXRetarget {
         this._rigRotation(vrm, "RightLowerArm", riggedPose.RightLowerArm, 1, 0.5);
         this._rigRotation(vrm, "LeftUpperArm",  riggedPose.LeftUpperArm,  1, 0.5);
         this._rigRotation(vrm, "LeftLowerArm",  riggedPose.LeftLowerArm,  1, 0.5);
-        // Legs: keep Kalidokit defaults — signer isn't stepping around.
-        this._rigRotation(vrm, "LeftUpperLeg",  riggedPose.LeftUpperLeg,  1, 0.3);
-        this._rigRotation(vrm, "LeftLowerLeg",  riggedPose.LeftLowerLeg,  1, 0.3);
-        this._rigRotation(vrm, "RightUpperLeg", riggedPose.RightUpperLeg, 1, 0.3);
-        this._rigRotation(vrm, "RightLowerLeg", riggedPose.RightLowerLeg, 1, 0.3);
+        // Legs intentionally NOT driven. The camera can't see them, so
+        // MediaPipe hallucinates leg pose from the visible upper body.
+        // We keep the mesh (rest pose from avatar._setRestPose + the
+        // idle rebias snapshot) so the avatar still has legs — they
+        // just don't jitter around.
       }
     }
 

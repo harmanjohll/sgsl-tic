@@ -9,12 +9,15 @@
    ============================================================ */
 
 // Target framing, in normalized-frame coordinates (MediaPipe 0..1).
-// These match the guide overlay drawn in recorder.drawOverlay.
+// These are intentionally lenient so a typical laptop-webcam crop
+// (tight on head + shoulders, hands below mid-frame until raised)
+// can pass. We only reject cases where detection is so bad that
+// retargeting quality collapses: no body, no centering, or signer
+// jammed against the lens.
 const FRAMING_TARGETS = {
-  headCxMin: 0.43, headCxMax: 0.57,           // horizontal center
-  headYMin:  0.10, headYMax:  0.26,           // nose vertical range
-  shoulderWidthMin: 0.18, shoulderWidthMax: 0.32,
-  shoulderYMin: 0.28, shoulderYMax: 0.42,
+  headCxMin: 0.30, headCxMax: 0.70,           // horizontal center band
+  shoulderMidYMax: 0.90,                       // shoulders not below frame
+  shoulderWidthMax: 0.60,                      // signer not touching lens
 };
 
 /**
@@ -29,24 +32,21 @@ export function framingScore(poseLandmarks) {
   const ls = poseLandmarks[11];
   const rs = poseLandmarks[12];
   if (!nose || !ls || !rs) {
-    return { ok: false, score: 0.1, reasons: ['Head and shoulders must be visible'] };
+    return { ok: false, score: 0.2, reasons: ['Head and shoulders must be visible'] };
   }
 
   const reasons = [];
   const headCx = nose.x;
-  const headY = nose.y;
   const shoulderMidY = (ls.y + rs.y) / 2;
   const shoulderWidth = Math.abs(ls.x - rs.x);
 
   const checks = [
     { ok: headCx >= FRAMING_TARGETS.headCxMin && headCx <= FRAMING_TARGETS.headCxMax,
       msg: headCx < FRAMING_TARGETS.headCxMin ? 'Move right' : 'Move left' },
-    { ok: headY >= FRAMING_TARGETS.headYMin && headY <= FRAMING_TARGETS.headYMax,
-      msg: headY < FRAMING_TARGETS.headYMin ? 'Lower the camera or sit down' : 'Raise the camera or stand up' },
-    { ok: shoulderWidth >= FRAMING_TARGETS.shoulderWidthMin && shoulderWidth <= FRAMING_TARGETS.shoulderWidthMax,
-      msg: shoulderWidth < FRAMING_TARGETS.shoulderWidthMin ? 'Move closer to the camera' : 'Move farther from the camera' },
-    { ok: shoulderMidY >= FRAMING_TARGETS.shoulderYMin && shoulderMidY <= FRAMING_TARGETS.shoulderYMax,
-      msg: shoulderMidY < FRAMING_TARGETS.shoulderYMin ? 'Lower your posture' : 'Raise your posture' },
+    { ok: shoulderMidY <= FRAMING_TARGETS.shoulderMidYMax,
+      msg: 'Raise the camera a bit — shoulders are off the bottom' },
+    { ok: shoulderWidth <= FRAMING_TARGETS.shoulderWidthMax,
+      msg: 'Move back slightly — too close to the camera' },
   ];
 
   let passed = 0;

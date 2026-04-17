@@ -271,19 +271,54 @@ function drawOverlay(results, fr) {
   ctx.lineWidth = 2;
   ctx.setLineDash(fr?.ok ? [] : [6, 4]);
 
-  // Head ellipse — target centered at cx, headY.
-  const cx = canvas.width * 0.5, headY = canvas.height * 0.17;
-  ctx.beginPath();
-  ctx.ellipse(cx, headY, canvas.width * 0.09, canvas.height * 0.11, 0, 0, Math.PI * 2);
-  ctx.stroke();
-  // Shoulder line target width ~22% of frame.
-  const shW = canvas.width * 0.22;
-  ctx.beginPath();
-  ctx.moveTo(cx - shW, canvas.height * 0.35);
-  ctx.lineTo(cx + shW, canvas.height * 0.35);
-  ctx.stroke();
-  // Signing-space box.
-  ctx.strokeRect(cx - canvas.width * 0.3, canvas.height * 0.05, canvas.width * 0.6, canvas.height * 0.75);
+  // Live-anchored guide: ellipse hugs the actual head, signing-space
+  // box drops from the shoulders. When pose isn't detected, fall back
+  // to a faint centered hint so the user still knows roughly where to
+  // stand.
+  const nose = results.poseLandmarks?.[0];
+  const ls = results.poseLandmarks?.[11];
+  const rs = results.poseLandmarks?.[12];
+
+  if (nose && ls && rs) {
+    const noseX = nose.x * canvas.width;
+    const noseY = nose.y * canvas.height;
+    const shoulderMidX = ((ls.x + rs.x) / 2) * canvas.width;
+    const shoulderMidY = ((ls.y + rs.y) / 2) * canvas.height;
+    const shoulderWidthPx = Math.abs(ls.x - rs.x) * canvas.width;
+
+    // Head ellipse sized to shoulder width (~0.85x wide, 1.1x tall).
+    const headRx = Math.max(40, shoulderWidthPx * 0.45);
+    const headRy = headRx * 1.25;
+    ctx.beginPath();
+    ctx.ellipse(noseX, noseY, headRx, headRy, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Shoulder line.
+    const halfSh = shoulderWidthPx / 2;
+    ctx.beginPath();
+    ctx.moveTo(shoulderMidX - halfSh, shoulderMidY);
+    ctx.lineTo(shoulderMidX + halfSh, shoulderMidY);
+    ctx.stroke();
+
+    // Signing-space box: from just above shoulders down to ~belt line,
+    // as wide as 1.8x shoulder width. This is where hands need to land.
+    const boxW = shoulderWidthPx * 1.8;
+    const boxTop = shoulderMidY - shoulderWidthPx * 0.2;
+    const boxHeight = shoulderWidthPx * 2.2;
+    ctx.strokeRect(shoulderMidX - boxW / 2, boxTop, boxW, boxHeight);
+
+    // Label the signing space so the user knows what the box means.
+    ctx.fillStyle = color;
+    ctx.font = '11px Inter, sans-serif';
+    ctx.fillText('Signing space — place hands here', shoulderMidX - boxW / 2 + 6, boxTop + 14);
+  } else {
+    // No pose: dim dashed center hint.
+    const cx = canvas.width * 0.5;
+    ctx.strokeStyle = 'rgba(200, 200, 220, 0.35)';
+    ctx.beginPath();
+    ctx.ellipse(cx, canvas.height * 0.3, canvas.width * 0.1, canvas.height * 0.13, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
   ctx.setLineDash([]);
 
   // Arm connections.

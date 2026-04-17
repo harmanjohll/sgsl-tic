@@ -135,6 +135,11 @@ export class SMPLXAvatar {
       BN.RightUpperArm, BN.LeftUpperArm,
       BN.RightLowerArm, BN.LeftLowerArm,
       BN.Hips, BN.Spine, BN.Chest, BN.Neck,
+      // Legs are never driven by retarget.js; snapshotting them here
+      // lets the idle rebias gently pull them back to rest if any
+      // upstream change ever writes them.
+      BN.LeftUpperLeg, BN.LeftLowerLeg,
+      BN.RightUpperLeg, BN.RightLowerLeg,
     ];
     for (const b of bones) {
       const node = vrm.humanoid.getBoneNode(b);
