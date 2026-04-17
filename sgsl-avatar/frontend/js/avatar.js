@@ -134,6 +134,7 @@ export class SMPLXAvatar {
     const bones = [
       BN.RightUpperArm, BN.LeftUpperArm,
       BN.RightLowerArm, BN.LeftLowerArm,
+      BN.RightHand, BN.LeftHand,
       BN.Hips, BN.Spine, BN.Chest, BN.Neck,
       // Legs are never driven by retarget.js; snapshotting them here
       // lets the idle rebias gently pull them back to rest if any
@@ -149,6 +150,23 @@ export class SMPLXAvatar {
 
   /** Called by the retarget layer each frame it writes bones. */
   markActive() { this._silentFrames = 0; }
+
+  /**
+   * Actively slerp a set of bones back toward their rest snapshot.
+   * Used by retarget.js when a per-arm visibility check fails — we
+   * don't want those bones to freeze at a hallucinated rotation.
+   */
+  slerpToRest(boneNames, lerpAmount = 0.18) {
+    if (!this.vrm) return;
+    const BN = THREE.VRMSchema.HumanoidBoneName;
+    for (const n of boneNames) {
+      const key = BN[n];
+      const rest = this._restTargets[key];
+      if (!rest) continue;
+      const node = this.vrm.humanoid.getBoneNode(key);
+      if (node) node.quaternion.slerp(rest, lerpAmount);
+    }
+  }
 
   _rebiasToRestIfIdle() {
     if (!this.vrm || !this._playing) return;

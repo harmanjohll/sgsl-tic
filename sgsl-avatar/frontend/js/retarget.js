@@ -154,35 +154,65 @@ export class SMPLXRetarget {
       ? this._countVisible(pose2DLandmarks) >= POSE_MIN_VISIBLE_LMS
       : false;
 
+    // Per-arm visibility. MediaPipe returns pose landmarks even for
+    // limbs that are off-frame, but the (x,y,z) are extrapolated from
+    // the visible torso — Kalidokit then returns plausible-looking
+    // garbage. Gate per-arm on elbow + wrist confidence so the avatar
+    // only moves an arm we actually saw.
+    const ARM_VIS_THRESH = 0.5;
+    const vis = (i) => pose2DLandmarks?.[i]?.visibility ?? 0;
+    // MediaPipe pose: 13 L-elbow, 14 R-elbow, 15 L-wrist, 16 R-wrist.
+    // MediaPipe reports sides as the camera sees them; Kalidokit/the
+    // signer think in terms of the signer's own sides. Handoff swap
+    // already happens for hands above; arm landmarks need the same
+    // mental flip here: MP "left" (13/15) → signer's right.
+    const signerRightArmOk = vis(13) >= ARM_VIS_THRESH && vis(15) >= ARM_VIS_THRESH;
+    const signerLeftArmOk  = vis(14) >= ARM_VIS_THRESH && vis(16) >= ARM_VIS_THRESH;
+
     if (poseVisible && pose3DLandmarks) {
       riggedPose = Kalidokit.Pose.solve(pose3DLandmarks, pose2DLandmarks, solveOpts);
       if (riggedPose) {
         if (this._avatar) this._avatar.markActive();
-        // Torso: small dampeners so MediaPipe noise doesn't tilt the avatar.
-        // Hips position transfer is intentionally disabled — SgSL signer
-        // stays planted; transferring MP hip position causes floating.
+        // Torso: small dampeners so MediaPipe noise doesn't tilt the
+        // avatar. Hips position transfer is intentionally disabled —
+        // SgSL signer stays planted; transferring MP hip position
+        // causes floating.
         this._rigRotation(vrm, "Hips", riggedPose.Hips.rotation, 0.2, 0.15);
         this._rigRotation(vrm, "Chest", riggedPose.Spine, 0.1, 0.15);
         this._rigRotation(vrm, "Spine", riggedPose.Spine, 0.2, 0.15);
-        // Arms: responsive lerp per user feedback (joints felt sluggish).
-        this._rigRotation(vrm, "RightUpperArm", riggedPose.RightUpperArm, 1, 0.5);
-        this._rigRotation(vrm, "RightLowerArm", riggedPose.RightLowerArm, 1, 0.5);
-        this._rigRotation(vrm, "LeftUpperArm",  riggedPose.LeftUpperArm,  1, 0.5);
-        this._rigRotation(vrm, "LeftLowerArm",  riggedPose.LeftLowerArm,  1, 0.5);
-        // Legs intentionally NOT driven. The camera can't see them, so
-        // MediaPipe hallucinates leg pose from the visible upper body.
-        // We keep the mesh (rest pose from avatar._setRestPose + the
-        // idle rebias snapshot) so the avatar still has legs — they
-        // just don't jitter around.
+
+        // Arms: only write the ones we actually saw. The other arm
+        // gets slerped back toward rest so it doesn't freeze in the
+        // last hallucinated pose.
+        if (signerRightArmOk) {
+          this._rigRotation(vrm, "RightUpperArm", riggedPose.RightUpperArm, 1, 0.65);
+          this._rigRotation(vrm, "RightLowerArm", riggedPose.RightLowerArm, 1, 0.65);
+        } else if (this._avatar) {
+          this._avatar.slerpToRest(["RightUpperArm", "RightLowerArm", "RightHand"], 0.18);
+        }
+        if (signerLeftArmOk) {
+          this._rigRotation(vrm, "LeftUpperArm",  riggedPose.LeftUpperArm,  1, 0.65);
+          this._rigRotation(vrm, "LeftLowerArm",  riggedPose.LeftLowerArm,  1, 0.65);
+        } else if (this._avatar) {
+          this._avatar.slerpToRest(["LeftUpperArm", "LeftLowerArm", "LeftHand"], 0.18);
+        }
+        // Legs intentionally NOT driven.
       }
     }
 
-    if (leftHandLandmarks && this._countVisible(leftHandLandmarks, 0) >= HAND_MIN_VISIBLE_LMS && riggedPose) {
+    // Hand writes are tied to that arm's visibility: a hand rotation
+    // needs `riggedPose[Side]Hand.z` for the wrist twist, which is
+    // hallucinated garbage if the arm wasn't actually seen.
+    if (signerLeftArmOk && leftHandLandmarks
+        && this._countVisible(leftHandLandmarks, 0) >= HAND_MIN_VISIBLE_LMS
+        && riggedPose) {
       riggedLeftHand = Kalidokit.Hand.solve(leftHandLandmarks, "Left");
       this._writeHand(vrm, "Left", riggedPose, riggedLeftHand);
     }
 
-    if (rightHandLandmarks && this._countVisible(rightHandLandmarks, 0) >= HAND_MIN_VISIBLE_LMS && riggedPose) {
+    if (signerRightArmOk && rightHandLandmarks
+        && this._countVisible(rightHandLandmarks, 0) >= HAND_MIN_VISIBLE_LMS
+        && riggedPose) {
       riggedRightHand = Kalidokit.Hand.solve(rightHandLandmarks, "Right");
       this._writeHand(vrm, "Right", riggedPose, riggedRightHand);
     }
