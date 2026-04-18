@@ -285,66 +285,90 @@ export class SMPLXRetarget {
       }
     }
 
-    // Arms: direct world-space pointing.
+    // Arms: direct world-space pointing, upper + lower separately.
     //
-    // Target point for the arm direction: we intentionally use the
-    // MIDDLE FINGERTIP (hand landmark 12) when a hand is detected,
-    // rather than the wrist (hand landmark 0). Rationale:
+    // Upper arm points from shoulder → elbow.
+    // Lower arm points from elbow → wrist.
     //
-    //   When the signer bends their elbow to bring the hand to face
-    //   level, the wrist joint stays near shoulder level — only the
-    //   forearm rotates up. Pointing Mei's straight arm at the wrist
-    //   in that case produces a horizontally-flared upper arm with
-    //   hand hanging low, which reads as a T-pose. Pointing the
-    //   straight arm at the fingertip makes it reach toward where
-    //   the user's hand VISIBLY is. Mei's arm looks like it's
-    //   reaching to face level — correct for sign legibility.
+    // Without this two-bone treatment, pointing the straight upper
+    // arm at the wrist (or the fingertip) made Mei's whole arm
+    // reach all the way to face level, so her un-driven forearm
+    // dangled from there and her hand ended up above her head.
+    // Driving both bones lets the elbow bend, hand lands where
+    // the user's hand actually is.
     //
-    // Fallbacks: hand palm center (landmark 9), then hand wrist
-    // (landmark 0), then pose wrist (MP 15/16) so we always have
-    // some target even with partial detection.
-    //
-    // MediaPipe pose 2D shoulder indices: 11 = user's anat left,
-    // 12 = user's anat right.
-    const handTarget = (handLMs, poseWristIdx) => (
-      handLMs?.[12]
-      || handLMs?.[9]
-      || handLMs?.[0]
-      || pose2DLandmarks?.[poseWristIdx]
-      || null
+    // When a hand is detected we take the wrist from hand-landmark-0
+    // (hand-solver, more accurate); otherwise we fall back to pose
+    // landmark 15/16. Elbow always comes from pose 13/14 (we have
+    // no hand-free elbow detector). If pose elbow visibility is
+    // low we estimate an elbow at the midpoint of shoulder+wrist —
+    // not anatomically correct, but gives a plausible straight
+    // arm that at least places the hand in the right spot.
+
+    // Pick the best wrist point available: hand-solver wrist first,
+    // else pose wrist. `lms` is the matching-side local hand array.
+    const pickWrist = (lms, poseWristIdx) => (
+      lms?.[0] || pose2DLandmarks?.[poseWristIdx] || null
     );
 
+    // Pick the elbow: pose elbow if visible, else midpoint of
+    // shoulder + wrist (straight-arm fallback).
+    const pickElbow = (poseElbowIdx, shoulder, wrist) => {
+      const e = pose2DLandmarks?.[poseElbowIdx];
+      if (e && (e.visibility ?? 1) >= 0.5) return e;
+      if (!shoulder || !wrist) return null;
+      return {
+        x: (shoulder.x + wrist.x) / 2,
+        y: (shoulder.y + wrist.y) / 2,
+        z: 0,
+      };
+    };
+
     if (pose2DLandmarks) {
-      // Side accounting (the source of yesterday's bug — commenting
-      // carefully). Under our swap at the top of this function:
+      // Side accounting (the source of repeated bugs — comment
+      // carefully). Under the swap at the top of this function:
       //   local leftHandLandmarks  = MP results.rightHandLandmarks
       //                            = user's ANATOMICAL RIGHT hand.
       //   local rightHandLandmarks = MP results.leftHandLandmarks
       //                            = user's ANATOMICAL LEFT hand.
       //
       // signerRightArmOn is triggered by local rightHandLandmarks,
-      //   i.e., user's anatomical LEFT side. That side's shoulder is
-      //   MP[11] and wrist is MP[15]. We drive Mei's RightUpperArm
-      //   bone — mirror: user's left hand up → Mei's right arm up
-      //   (appears on the same side of the screen in selfie view).
+      //   i.e., user's anatomical LEFT side.  Shoulder = MP[11],
+      //   elbow = MP[13], wrist = MP[15].  We drive Mei's Right*
+      //   bones — mirror: user's left hand up → Mei's right arm up.
       //
       // signerLeftArmOn is triggered by local leftHandLandmarks,
       //   i.e., user's anatomical RIGHT side: shoulder MP[12],
-      //   wrist MP[16]. We drive Mei's LeftUpperArm.
+      //   elbow MP[14], wrist MP[16]. We drive Mei's Left* bones.
+
       if (signerRightArmOn) {
-        const sh = pose2DLandmarks[11];                  // user's LEFT shoulder
-        const wr = handTarget(rightHandLandmarks, 15);   // user's LEFT fingertip / wrist
-        const dir = this._imageToWorldArmDir(sh, wr);
-        if (dir) this._pointBoneInWorld(vrm, "RightUpperArm", dir, 0.5);
+        const sh = pose2DLandmarks[11];
+        const wr = pickWrist(rightHandLandmarks, 15);
+        const el = pickElbow(13, sh, wr);
+        if (sh && el) {
+          const upDir = this._imageToWorldArmDir(sh, el);
+          if (upDir) this._pointBoneInWorld(vrm, "RightUpperArm", upDir, 0.5);
+        }
+        if (el && wr) {
+          const loDir = this._imageToWorldArmDir(el, wr);
+          if (loDir) this._pointBoneInWorld(vrm, "RightLowerArm", loDir, 0.5);
+        }
       } else if (this._avatar) {
         this._avatar.slerpToRest(["RightUpperArm", "RightLowerArm", "RightHand"], 0.18);
       }
 
       if (signerLeftArmOn) {
-        const sh = pose2DLandmarks[12];                  // user's RIGHT shoulder
-        const wr = handTarget(leftHandLandmarks, 16);    // user's RIGHT fingertip / wrist
-        const dir = this._imageToWorldArmDir(sh, wr);
-        if (dir) this._pointBoneInWorld(vrm, "LeftUpperArm", dir, 0.5);
+        const sh = pose2DLandmarks[12];
+        const wr = pickWrist(leftHandLandmarks, 16);
+        const el = pickElbow(14, sh, wr);
+        if (sh && el) {
+          const upDir = this._imageToWorldArmDir(sh, el);
+          if (upDir) this._pointBoneInWorld(vrm, "LeftUpperArm", upDir, 0.5);
+        }
+        if (el && wr) {
+          const loDir = this._imageToWorldArmDir(el, wr);
+          if (loDir) this._pointBoneInWorld(vrm, "LeftLowerArm", loDir, 0.5);
+        }
       } else if (this._avatar) {
         this._avatar.slerpToRest(["LeftUpperArm", "LeftLowerArm", "LeftHand"], 0.18);
       }
