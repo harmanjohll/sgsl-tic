@@ -218,11 +218,9 @@ export class SMPLXRetarget {
     }
 
     if (emitDebug) {
-      const fmtEuler = (e) => e
-        ? `x=${(+e.x).toFixed(2)} y=${(+e.y).toFixed(2)} z=${(+e.z).toFixed(2)}`
-        : 'NULL';
       // Shoulder→wrist 2D vector in normalized image coords.
-      // Negative dy = hand above shoulder (hand raised).
+      // Negative dy = hand above shoulder (hand raised). Useful for
+      // verifying framing + gesture detection in the field.
       const sw = (shoulderIdx, wristIdx) => {
         const s = pose2DLandmarks?.[shoulderIdx];
         const w = pose2DLandmarks?.[wristIdx];
@@ -239,11 +237,7 @@ export class SMPLXRetarget {
         + `\nleftHand(MP): ${leftHandLandmarks ? 'yes' : 'no'}`
         + `\narmStreak: R=${this._rightArmStreak} L=${this._leftArmStreak}`
         + `\nRsh->wrist: ${sw(11, 15)}`
-        + `\nLsh->wrist: ${sw(12, 16)}`
-        + `\nKD.RUpper: ${fmtEuler(riggedPose?.RightUpperArm)}`
-        + `\nKD.LUpper: ${fmtEuler(riggedPose?.LeftUpperArm)}`
-        + `\nKD.RLower: ${fmtEuler(riggedPose?.RightLowerArm)}`
-        + `\nKD.LLower: ${fmtEuler(riggedPose?.LeftLowerArm)}`;
+        + `\nLsh->wrist: ${sw(12, 16)}`;
     }
 
     // Hand writes: hand-solve only, no longer mix in pose-Z.
