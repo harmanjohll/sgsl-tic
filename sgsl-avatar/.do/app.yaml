@@ -1,0 +1,43 @@
+# DigitalOcean App Platform spec for SgSL Avatar.
+#
+# Deploy with:
+#   doctl apps create --spec sgsl-avatar/.do/app.yaml
+# Or update an existing app:
+#   doctl apps update <APP_ID> --spec sgsl-avatar/.do/app.yaml
+#
+# Prereqs:
+#   1. A DigitalOcean Spaces bucket (region + name in env below).
+#   2. Spaces access key / secret registered as app-level secrets.
+#   3. Any VRM asset hosted at /assets/avatar.vrm inside the repo
+#      (or swap to a signed Spaces URL via the frontend later).
+#
+# This spec intentionally keeps everything in one service so CORS and
+# /api/* routing stay trivial. Scale the single service when needed.
+name: sgsl-avatar
+region: sgp
+services:
+  - name: web
+    github:
+      repo: harmanjohll/sgsl-tic
+      branch: main
+      deploy_on_push: true
+    source_dir: sgsl-avatar/backend
+    run_command: uvicorn app:app --host 0.0.0.0 --port 8080
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    envs:
+      - key: STORAGE_BACKEND
+        value: s3
+      - key: DO_SPACES_REGION
+        value: sgp1
+      - key: DO_SPACES_BUCKET
+        value: sgsl-signs
+      - key: DO_SPACES_KEY
+        type: SECRET
+      - key: DO_SPACES_SECRET
+        type: SECRET
+      - key: ADMIN_TOKEN
+        type: SECRET
+    routes:
+      - path: /
