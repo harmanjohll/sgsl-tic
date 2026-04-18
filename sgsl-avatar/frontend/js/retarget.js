@@ -287,34 +287,48 @@ export class SMPLXRetarget {
 
     // Arms: direct world-space pointing.
     //
-    // For each arm, we want the shoulder→wrist direction to match
-    // what the user is showing. Source for the wrist landmark:
-    //   - Hand-detection wrist (hand-array index 0) when a hand was
-    //     detected. This is the most accurate source.
-    //   - Pose 2D wrist landmark (15/16) as a fallback.
+    // Target point for the arm direction: we intentionally use the
+    // MIDDLE FINGERTIP (hand landmark 12) when a hand is detected,
+    // rather than the wrist (hand landmark 0). Rationale:
     //
-    // MediaPipe pose 2D shoulder indices: 11 = signer's left,
-    // 12 = signer's right. Our retarget code uses the swap convention
-    // where leftHandLandmarks (variable) holds the signer's right
-    // hand data (via results.rightHandLandmarks), and we drive Mei's
-    // RightUpperArm bone with the signer's right side.
+    //   When the signer bends their elbow to bring the hand to face
+    //   level, the wrist joint stays near shoulder level — only the
+    //   forearm rotates up. Pointing Mei's straight arm at the wrist
+    //   in that case produces a horizontally-flared upper arm with
+    //   hand hanging low, which reads as a T-pose. Pointing the
+    //   straight arm at the fingertip makes it reach toward where
+    //   the user's hand VISIBLY is. Mei's arm looks like it's
+    //   reaching to face level — correct for sign legibility.
+    //
+    // Fallbacks: hand palm center (landmark 9), then hand wrist
+    // (landmark 0), then pose wrist (MP 15/16) so we always have
+    // some target even with partial detection.
+    //
+    // MediaPipe pose 2D shoulder indices: 11 = user's anat left,
+    // 12 = user's anat right.
+    const handTarget = (handLMs, poseWristIdx) => (
+      handLMs?.[12]
+      || handLMs?.[9]
+      || handLMs?.[0]
+      || pose2DLandmarks?.[poseWristIdx]
+      || null
+    );
+
     if (pose2DLandmarks) {
-      // Signer's RIGHT side (Mei's RightUpperArm).
-      // Shoulder = MP[12]. Wrist = rightHandLandmarks[0] (which is
-      // results.leftHandLandmarks under the swap) if detected, else MP[16].
+      // Signer's right side → driven into Mei's RightUpperArm
+      // (under our swap convention; see variable setup above).
       if (signerRightArmOn) {
         const sh = pose2DLandmarks[12];
-        const wr = (rightHandLandmarks?.[0]) || pose2DLandmarks[16];
+        const wr = handTarget(rightHandLandmarks, 16);
         const dir = this._imageToWorldArmDir(sh, wr);
         if (dir) this._pointBoneInWorld(vrm, "RightUpperArm", dir, 0.5);
       } else if (this._avatar) {
         this._avatar.slerpToRest(["RightUpperArm", "RightLowerArm", "RightHand"], 0.18);
       }
 
-      // Signer's LEFT side (Mei's LeftUpperArm).
       if (signerLeftArmOn) {
         const sh = pose2DLandmarks[11];
-        const wr = (leftHandLandmarks?.[0]) || pose2DLandmarks[15];
+        const wr = handTarget(leftHandLandmarks, 15);
         const dir = this._imageToWorldArmDir(sh, wr);
         if (dir) this._pointBoneInWorld(vrm, "LeftUpperArm", dir, 0.5);
       } else if (this._avatar) {
