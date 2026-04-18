@@ -5,15 +5,8 @@
    Diverges from the demo where necessary for laptop-webcam signing:
    - Arms are gated per-side with 5-frame hysteresis so MediaPipe
      hand-detection flicker doesn't collapse Mei to rest.
-   - Upper-arm rotation is computed DIRECTLY from the 2D
-     shoulder→wrist vector when the hand is detected. Kalidokit's
-     pose solver under-shoots arm height when the elbow is off-frame
-     (it extrapolates world-z from the torso and believes itself).
-     We still use Kalidokit for the elbow bend and the "hands down"
-     fallback.
-   - Wrist rotation drops the pose-solver's z component (the same
-     hallucination that caused under-shoot was rotating the hand
-     onto a bad plane, so open palms rendered as curled fingers).
+   - Wrist rotation drops the pose-solver's z component; open palms
+     were rendering as curled fingers when pose-z was hallucinated.
    - Torso dampened; Hips position transfer removed (SgSL signer
      stays planted, prevents floating/tilt).
    - Legs are never driven (avatar.js holds them in rest).
@@ -147,47 +140,6 @@ export class SMPLXRetarget {
     }
   }
 
-  /**
-   * Compute upper-arm Euler directly from MediaPipe 2D shoulder→wrist.
-   * This sidesteps Kalidokit's pose solver, which under-shoots arm
-   * height when the elbow is extrapolated (laptop crop case).
-   *
-   * We return an object compatible with _rigRotation:
-   *  { x, y, z, rotationOrder }.
-   *
-   * `side` is "Right" or "Left" from the SIGNER'S perspective.
-   * `shoulder`, `wrist` are MediaPipe 2D landmarks (x,y in [0..1]).
-   */
-  _directUpperArm(side, shoulder, wrist) {
-    if (!shoulder || !wrist) return null;
-    // MediaPipe 2D convention: +x right, +y down.
-    // Rest upper-arm in the VRM hangs straight down (shoulder→wrist
-    // vector pointing +y in the image).
-    const dx = wrist.x - shoulder.x;
-    const dy = wrist.y - shoulder.y;
-
-    // Angle from straight-down, measured CCW when viewed from the
-    // front. atan2(dx, dy): 0 = straight down, +π/2 = arm out to
-    // the signer's right (camera's left side of frame).
-    const angle = Math.atan2(dx, dy);
-
-    // For a VRM facing the camera (rotated Math.PI in the scene):
-    //   RightUpperArm.rotation.z > 0 raises the right arm
-    //   LeftUpperArm.rotation.z  < 0 raises the left arm
-    // The sign flip takes care of the mirror.
-    const sign = (side === "Right") ? 1 : -1;
-    const zRot = sign * angle;
-
-    // Pitch (x rotation) — use the horizontal distance from shoulder
-    // to wrist as a very rough proxy for "how forward" the hand is.
-    // Sign language is mostly frontal, so keep this small and let
-    // Kalidokit's lower-arm handle forward reach.
-    const horizontalReach = Math.abs(dx);
-    const xRot = -0.2 * clamp(horizontalReach - 0.15, 0, 1);
-
-    return { x: xRot, y: 0, z: zRot, rotationOrder: "XYZ" };
-  }
-
   applyFromMediaPipe(vrm, results) {
     if (!vrm) return;
     let riggedPose, riggedLeftHand, riggedRightHand, riggedFace;
@@ -255,42 +207,18 @@ export class SMPLXRetarget {
         this._rigRotation(vrm, "Chest", riggedPose.Spine, 0.1, 0.15);
         this._rigRotation(vrm, "Spine", riggedPose.Spine, 0.2, 0.15);
 
-        // MediaPipe 2D shoulders: 11 = signer's right, 12 = signer's left.
-        const rightShoulder = pose2DLandmarks?.[11];
-        const leftShoulder  = pose2DLandmarks?.[12];
-        // Hand wrist landmark within a hand array is index 0.
-        const rightWrist = rightHandLandmarks?.[0];
-        const leftWrist  = leftHandLandmarks?.[0];
-
-        // Right arm
+        // Arms: only write the ones we actually saw. The other arm
+        // gets slerped back toward rest so it doesn't freeze in the
+        // last hallucinated pose.
         if (signerRightArmOn) {
-          // Prefer direct 2D computation when we have hand + shoulder.
-          // It bypasses Kalidokit's elbow extrapolation, which was
-          // under-shooting arm height on laptop crops.
-          const direct = (rightWrist && rightShoulder)
-            ? this._directUpperArm("Right", rightShoulder, rightWrist)
-            : null;
-          this._rigRotation(
-            vrm, "RightUpperArm",
-            direct || riggedPose.RightUpperArm,
-            1, 0.65,
-          );
+          this._rigRotation(vrm, "RightUpperArm", riggedPose.RightUpperArm, 1, 0.65);
           this._rigRotation(vrm, "RightLowerArm", riggedPose.RightLowerArm, 1, 0.65);
         } else if (this._avatar) {
           this._avatar.slerpToRest(["RightUpperArm", "RightLowerArm", "RightHand"], 0.18);
         }
-
-        // Left arm
         if (signerLeftArmOn) {
-          const direct = (leftWrist && leftShoulder)
-            ? this._directUpperArm("Left", leftShoulder, leftWrist)
-            : null;
-          this._rigRotation(
-            vrm, "LeftUpperArm",
-            direct || riggedPose.LeftUpperArm,
-            1, 0.65,
-          );
-          this._rigRotation(vrm, "LeftLowerArm", riggedPose.LeftLowerArm, 1, 0.65);
+          this._rigRotation(vrm, "LeftUpperArm",  riggedPose.LeftUpperArm,  1, 0.65);
+          this._rigRotation(vrm, "LeftLowerArm",  riggedPose.LeftLowerArm,  1, 0.65);
         } else if (this._avatar) {
           this._avatar.slerpToRest(["LeftUpperArm", "LeftLowerArm", "LeftHand"], 0.18);
         }
