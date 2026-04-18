@@ -315,11 +315,25 @@ export class SMPLXRetarget {
     );
 
     if (pose2DLandmarks) {
-      // Signer's right side → driven into Mei's RightUpperArm
-      // (under our swap convention; see variable setup above).
+      // Side accounting (the source of yesterday's bug — commenting
+      // carefully). Under our swap at the top of this function:
+      //   local leftHandLandmarks  = MP results.rightHandLandmarks
+      //                            = user's ANATOMICAL RIGHT hand.
+      //   local rightHandLandmarks = MP results.leftHandLandmarks
+      //                            = user's ANATOMICAL LEFT hand.
+      //
+      // signerRightArmOn is triggered by local rightHandLandmarks,
+      //   i.e., user's anatomical LEFT side. That side's shoulder is
+      //   MP[11] and wrist is MP[15]. We drive Mei's RightUpperArm
+      //   bone — mirror: user's left hand up → Mei's right arm up
+      //   (appears on the same side of the screen in selfie view).
+      //
+      // signerLeftArmOn is triggered by local leftHandLandmarks,
+      //   i.e., user's anatomical RIGHT side: shoulder MP[12],
+      //   wrist MP[16]. We drive Mei's LeftUpperArm.
       if (signerRightArmOn) {
-        const sh = pose2DLandmarks[12];
-        const wr = handTarget(rightHandLandmarks, 16);
+        const sh = pose2DLandmarks[11];                  // user's LEFT shoulder
+        const wr = handTarget(rightHandLandmarks, 15);   // user's LEFT fingertip / wrist
         const dir = this._imageToWorldArmDir(sh, wr);
         if (dir) this._pointBoneInWorld(vrm, "RightUpperArm", dir, 0.5);
       } else if (this._avatar) {
@@ -327,8 +341,8 @@ export class SMPLXRetarget {
       }
 
       if (signerLeftArmOn) {
-        const sh = pose2DLandmarks[11];
-        const wr = handTarget(leftHandLandmarks, 15);
+        const sh = pose2DLandmarks[12];                  // user's RIGHT shoulder
+        const wr = handTarget(leftHandLandmarks, 16);    // user's RIGHT fingertip / wrist
         const dir = this._imageToWorldArmDir(sh, wr);
         if (dir) this._pointBoneInWorld(vrm, "LeftUpperArm", dir, 0.5);
       } else if (this._avatar) {
