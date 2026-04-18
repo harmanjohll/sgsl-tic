@@ -157,15 +157,7 @@ export class SMPLXRetarget {
       : { runtime: "mediapipe" };
 
     this._dc++;
-    if (this._dc % 30 === 0) {
-      this._lastDebug = `Frame: ${this._dc}`
-        + `\npose3D: ${pose3DLandmarks ? pose3DLandmarks.length + ' lm' : 'NULL'}`
-        + `\npose2D: ${pose2DLandmarks ? pose2DLandmarks.length + ' lm' : 'NULL'}`
-        + `\nface: ${faceLandmarks ? faceLandmarks.length + ' lm' : 'NULL'}`
-        + `\nrightHand(MP): ${rightHandLandmarks ? 'yes' : 'no'}`
-        + `\nleftHand(MP): ${leftHandLandmarks ? 'yes' : 'no'}`
-        + `\narmStreak: R=${this._rightArmStreak} L=${this._leftArmStreak}`;
-    }
+    const emitDebug = (this._dc % 30 === 0);
 
     if (faceLandmarks && faceLandmarks.length >= 468) {
       riggedFace = Kalidokit.Face.solve(faceLandmarks, solveOpts);
@@ -181,8 +173,7 @@ export class SMPLXRetarget {
     // no-hand-raised case.
     const vis = (i) => pose2DLandmarks?.[i]?.visibility ?? 0;
     const handDetected = (lms) =>
-      lms && this._countVisible(lms, 0) >= HAND_MIN_VISIBLE_LMS;
-    // MediaPipe pose wrist indices: 15 = signer's right, 16 = signer's left.
+      lms && this._countVisible(lms, 0) >= HAND_MIN_VISIBLE_LMS;    // MediaPipe pose wrist indices: 15 = signer's right, 16 = signer's left.
     const rawRightOk = handDetected(rightHandLandmarks) || vis(15) >= WRIST_VIS_THRESH;
     const rawLeftOk  = handDetected(leftHandLandmarks)  || vis(16) >= WRIST_VIS_THRESH;
 
@@ -224,6 +215,35 @@ export class SMPLXRetarget {
         }
         // Legs intentionally NOT driven.
       }
+    }
+
+    if (emitDebug) {
+      const fmtEuler = (e) => e
+        ? `x=${(+e.x).toFixed(2)} y=${(+e.y).toFixed(2)} z=${(+e.z).toFixed(2)}`
+        : 'NULL';
+      // Shoulder→wrist 2D vector in normalized image coords.
+      // Negative dy = hand above shoulder (hand raised).
+      const sw = (shoulderIdx, wristIdx) => {
+        const s = pose2DLandmarks?.[shoulderIdx];
+        const w = pose2DLandmarks?.[wristIdx];
+        if (!s || !w) return 'NULL';
+        const dx = (w.x - s.x).toFixed(2);
+        const dy = (w.y - s.y).toFixed(2);
+        return `dx=${dx} dy=${dy}`;
+      };
+      this._lastDebug = `Frame: ${this._dc}`
+        + `\npose3D: ${pose3DLandmarks ? pose3DLandmarks.length + ' lm' : 'NULL'}`
+        + `\npose2D: ${pose2DLandmarks ? pose2DLandmarks.length + ' lm' : 'NULL'}`
+        + `\nface: ${faceLandmarks ? faceLandmarks.length + ' lm' : 'NULL'}`
+        + `\nrightHand(MP): ${rightHandLandmarks ? 'yes' : 'no'}`
+        + `\nleftHand(MP): ${leftHandLandmarks ? 'yes' : 'no'}`
+        + `\narmStreak: R=${this._rightArmStreak} L=${this._leftArmStreak}`
+        + `\nRsh->wrist: ${sw(11, 15)}`
+        + `\nLsh->wrist: ${sw(12, 16)}`
+        + `\nKD.RUpper: ${fmtEuler(riggedPose?.RightUpperArm)}`
+        + `\nKD.LUpper: ${fmtEuler(riggedPose?.LeftUpperArm)}`
+        + `\nKD.RLower: ${fmtEuler(riggedPose?.RightLowerArm)}`
+        + `\nKD.LLower: ${fmtEuler(riggedPose?.LeftLowerArm)}`;
     }
 
     // Hand writes: hand-solve only, no longer mix in pose-Z.
