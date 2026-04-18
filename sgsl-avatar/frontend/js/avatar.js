@@ -102,6 +102,7 @@ export class SMPLXAvatar {
 
           this._setRestPose(vrm);
           this._snapshotRestTargets(vrm);
+          this._snapshotRestWorldDirs(vrm);
 
           if (this._statusEl) { this._statusEl.remove(); this._statusEl = null; }
           this.loaded = true;
@@ -145,6 +146,37 @@ export class SMPLXAvatar {
     for (const b of bones) {
       const node = vrm.humanoid.getBoneNode(b);
       if (node) this._restTargets[b] = node.quaternion.clone();
+    }
+  }
+
+  /**
+   * Snapshot the world-space direction from each driven bone toward
+   * its child, evaluated at rest. The retarget layer uses these to
+   * compute a quaternion delta that points the bone in a desired
+   * world-space direction without ever touching local Eulers
+   * (which depend on bone-axis conventions we don't control).
+   */
+  _snapshotRestWorldDirs(vrm) {
+    vrm.scene.updateMatrixWorld(true);
+    const BN = THREE.VRMSchema.HumanoidBoneName;
+    this._restWorldDirs = {};
+
+    const chains = [
+      ['RightUpperArm', 'RightLowerArm'],
+      ['LeftUpperArm',  'LeftLowerArm'],
+      ['RightLowerArm', 'RightHand'],
+      ['LeftLowerArm',  'LeftHand'],
+    ];
+
+    for (const [parentName, childName] of chains) {
+      const p = vrm.humanoid.getBoneNode(BN[parentName]);
+      const c = vrm.humanoid.getBoneNode(BN[childName]);
+      if (!p || !c) continue;
+      const pPos = new THREE.Vector3();
+      const cPos = new THREE.Vector3();
+      p.getWorldPosition(pPos);
+      c.getWorldPosition(cPos);
+      this._restWorldDirs[parentName] = cPos.sub(pPos).normalize();
     }
   }
 

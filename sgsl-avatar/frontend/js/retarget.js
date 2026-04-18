@@ -1,15 +1,38 @@
 /* ============================================================
-   SgSL Avatar — Kalidokit Retargeting
-   Derived from Kalidokit demo script.js (VRM 0.x API).
+   SgSL Avatar — Retargeting
+   ============================================================
+   What this module does, top to bottom:
 
-   Diverges from the demo where necessary for laptop-webcam signing:
-   - Arms are gated per-side with 5-frame hysteresis so MediaPipe
-     hand-detection flicker doesn't collapse Mei to rest.
-   - Wrist rotation drops the pose-solver's z component; open palms
-     were rendering as curled fingers when pose-z was hallucinated.
-   - Torso dampened; Hips position transfer removed (SgSL signer
-     stays planted, prevents floating/tilt).
-   - Legs are never driven (avatar.js holds them in rest).
+   1. ARMS are NOT driven by Kalidokit's pose solver any more.
+      That solver returns local-bone Eulers based on a hallucinated
+      elbow when the elbow is out of frame (laptop webcam case),
+      and local Eulers depend on bone-axis conventions we don't
+      control — that combination cost us many iterations of
+      visible regressions.
+
+      Instead: we read the 2D shoulder→wrist vector from MediaPipe,
+      flip image-Y to world-Y, and rotate the UpperArm bone via a
+      world-space quaternion so its rest direction aligns with
+      that vector. THREE.Quaternion.setFromUnitVectors handles
+      every axis convention for us. Mei's wrist ends up where the
+      user's wrist actually is. The lower arm is left in its rest
+      orientation (no elbow bend driven from the camera) — it'll
+      look stick-like at extreme angles but the hand position is
+      what matters for sign legibility.
+
+   2. HANDS (fingers + wrist) are still driven by Kalidokit.Hand.solve
+      from the 21 hand-landmark feed. That part has worked
+      consistently. Wrist rotation no longer mixes the pose
+      solver's hallucinated Z component.
+
+   3. FACE is still driven by Kalidokit.Face.solve.
+
+   4. TORSO (Hips/Spine/Chest) is dampened so MediaPipe noise
+      doesn't tilt the avatar. Hips position transfer is disabled
+      (SgSL signer stays planted). Legs are never driven.
+
+   5. Per-arm 5-frame hysteresis absorbs MediaPipe hand-detection
+      flicker so a brief drop doesn't collapse Mei to rest.
    ============================================================ */
 
 import * as Kalidokit from 'kalidokit';
@@ -116,6 +139,68 @@ export class SMPLXRetarget {
     if (vrm.lookAt && vrm.lookAt.applyer) vrm.lookAt.applyer.lookAt(lookTarget);
   }
 
+  /**
+   * Rotate a bone in WORLD space so its rest direction aligns with
+   * `desiredWorldDir`. Bypasses local-bone-Euler conventions
+   * entirely — Three.Quaternion.setFromUnitVectors does the axis
+   * math, and we convert back to local using the bone's parent.
+   *
+   * Returns true if applied, false if the rest snapshot is missing.
+   */
+  _pointBoneInWorld(vrm, boneName, desiredWorldDir, lerpAmount = 0.5) {
+    if (!this._avatar || !desiredWorldDir) return false;
+    const restWorldDir = this._avatar._restWorldDirs?.[boneName];
+    if (!restWorldDir) return false;
+
+    const BN = THREE.VRMSchema.HumanoidBoneName;
+    const bone = vrm.humanoid.getBoneNode(BN[boneName]);
+    if (!bone) return false;
+
+    const restLocalQuat = this._avatar._restTargets?.[BN[boneName]];
+    if (!restLocalQuat) return false;
+
+    // World-space delta that takes restDir → desiredDir.
+    const Qworld = new THREE.Quaternion().setFromUnitVectors(
+      restWorldDir, desiredWorldDir.clone().normalize(),
+    );
+
+    // Convert to bone-local: newLocal = parentWorld⁻¹ * Qworld * parentWorld * restLocal.
+    const parentWorld = new THREE.Quaternion();
+    bone.parent.getWorldQuaternion(parentWorld);
+
+    const restWorld = parentWorld.clone().multiply(restLocalQuat);
+    const newWorld = Qworld.clone().multiply(restWorld);
+    const newLocal = parentWorld.clone().invert().multiply(newWorld);
+
+    bone.quaternion.slerp(newLocal, lerpAmount);
+    return true;
+  }
+
+  /**
+   * Compute a desired arm direction in avatar world space from a 2D
+   * shoulder→wrist vector in MediaPipe image coordinates.
+   *
+   * Image: +x right, +y down, no z.
+   * Avatar world (after vrm.scene.rotation.y = π): +Y up, +X to
+   * viewer's left, +Z toward viewer.
+   *
+   * The CSS mirrors the camera preview so the user sees themselves
+   * naturally. MediaPipe processes the un-mirrored raw video, but
+   * since both the user's right hand AND Mei's right (as viewed)
+   * end up on the same side of the screen after Mei's 180°
+   * rotation, we can pass image dx through directly. Image dy
+   * negates (image-down → world-up). Z=0 keeps things in the
+   * frontal plane (sign language is mostly frontal).
+   */
+  _imageToWorldArmDir(shoulder2D, wrist2D) {
+    if (!shoulder2D || !wrist2D) return null;
+    const dx = wrist2D.x - shoulder2D.x;
+    const dy = wrist2D.y - shoulder2D.y;
+    const v = new THREE.Vector3(dx, -dy, 0);
+    if (v.lengthSq() < 1e-6) return null;
+    return v.normalize();
+  }
+
   _writeHand(vrm, side, riggedHand) {
     if (!riggedHand) return;
     const wrist = riggedHand[`${side}Wrist`];
@@ -187,40 +272,61 @@ export class SMPLXRetarget {
     const signerRightArmOn = this._rightArmStreak > 0;
     const signerLeftArmOn  = this._leftArmStreak  > 0;
 
+    // We still call Pose.solve for torso (Hips/Spine/Chest), but we
+    // ignore its arm Eulers entirely.
     if (poseVisible && pose3DLandmarks) {
       riggedPose = Kalidokit.Pose.solve(pose3DLandmarks, pose2DLandmarks, solveOpts);
       if (riggedPose) {
         if (this._avatar) this._avatar.markActive();
 
-        // Torso: small dampeners so MediaPipe noise doesn't tilt the
-        // avatar. Hips position transfer is intentionally disabled.
         this._rigRotation(vrm, "Hips", riggedPose.Hips.rotation, 0.2, 0.15);
         this._rigRotation(vrm, "Chest", riggedPose.Spine, 0.1, 0.15);
         this._rigRotation(vrm, "Spine", riggedPose.Spine, 0.2, 0.15);
+      }
+    }
 
-        // Arms: only write the ones we actually saw. The other arm
-        // gets slerped back toward rest so it doesn't freeze in the
-        // last hallucinated pose.
-        if (signerRightArmOn) {
-          this._rigRotation(vrm, "RightUpperArm", riggedPose.RightUpperArm, 1, 0.65);
-          this._rigRotation(vrm, "RightLowerArm", riggedPose.RightLowerArm, 1, 0.65);
-        } else if (this._avatar) {
-          this._avatar.slerpToRest(["RightUpperArm", "RightLowerArm", "RightHand"], 0.18);
-        }
-        if (signerLeftArmOn) {
-          this._rigRotation(vrm, "LeftUpperArm",  riggedPose.LeftUpperArm,  1, 0.65);
-          this._rigRotation(vrm, "LeftLowerArm",  riggedPose.LeftLowerArm,  1, 0.65);
-        } else if (this._avatar) {
-          this._avatar.slerpToRest(["LeftUpperArm", "LeftLowerArm", "LeftHand"], 0.18);
-        }
-        // Legs intentionally NOT driven.
+    // Arms: direct world-space pointing.
+    //
+    // For each arm, we want the shoulder→wrist direction to match
+    // what the user is showing. Source for the wrist landmark:
+    //   - Hand-detection wrist (hand-array index 0) when a hand was
+    //     detected. This is the most accurate source.
+    //   - Pose 2D wrist landmark (15/16) as a fallback.
+    //
+    // MediaPipe pose 2D shoulder indices: 11 = signer's left,
+    // 12 = signer's right. Our retarget code uses the swap convention
+    // where leftHandLandmarks (variable) holds the signer's right
+    // hand data (via results.rightHandLandmarks), and we drive Mei's
+    // RightUpperArm bone with the signer's right side.
+    if (pose2DLandmarks) {
+      // Signer's RIGHT side (Mei's RightUpperArm).
+      // Shoulder = MP[12]. Wrist = rightHandLandmarks[0] (which is
+      // results.leftHandLandmarks under the swap) if detected, else MP[16].
+      if (signerRightArmOn) {
+        const sh = pose2DLandmarks[12];
+        const wr = (rightHandLandmarks?.[0]) || pose2DLandmarks[16];
+        const dir = this._imageToWorldArmDir(sh, wr);
+        if (dir) this._pointBoneInWorld(vrm, "RightUpperArm", dir, 0.5);
+      } else if (this._avatar) {
+        this._avatar.slerpToRest(["RightUpperArm", "RightLowerArm", "RightHand"], 0.18);
+      }
+
+      // Signer's LEFT side (Mei's LeftUpperArm).
+      if (signerLeftArmOn) {
+        const sh = pose2DLandmarks[11];
+        const wr = (leftHandLandmarks?.[0]) || pose2DLandmarks[15];
+        const dir = this._imageToWorldArmDir(sh, wr);
+        if (dir) this._pointBoneInWorld(vrm, "LeftUpperArm", dir, 0.5);
+      } else if (this._avatar) {
+        this._avatar.slerpToRest(["LeftUpperArm", "LeftLowerArm", "LeftHand"], 0.18);
       }
     }
 
     if (emitDebug) {
-      // Shoulder→wrist 2D vector in normalized image coords.
-      // Negative dy = hand above shoulder (hand raised). Useful for
-      // verifying framing + gesture detection in the field.
+      // Pose-side shoulder→wrist 2D vector in normalized image coords.
+      // The label "Rsh->wrist" reads "MP-right shoulder to MP-right
+      // wrist" = user's anatomical right side. Use to verify
+      // framing + that detection is reaching expected coords.
       const sw = (shoulderIdx, wristIdx) => {
         const s = pose2DLandmarks?.[shoulderIdx];
         const w = pose2DLandmarks?.[wristIdx];
@@ -229,6 +335,10 @@ export class SMPLXRetarget {
         const dy = (w.y - s.y).toFixed(2);
         return `dx=${dx} dy=${dy}`;
       };
+      const restDirs = this._avatar?._restWorldDirs;
+      const rdr = restDirs?.RightUpperArm;
+      const ldr = restDirs?.LeftUpperArm;
+      const fmtV = (v) => v ? `(${v.x.toFixed(2)},${v.y.toFixed(2)},${v.z.toFixed(2)})` : 'NULL';
       this._lastDebug = `Frame: ${this._dc}`
         + `\npose3D: ${pose3DLandmarks ? pose3DLandmarks.length + ' lm' : 'NULL'}`
         + `\npose2D: ${pose2DLandmarks ? pose2DLandmarks.length + ' lm' : 'NULL'}`
@@ -236,8 +346,10 @@ export class SMPLXRetarget {
         + `\nrightHand(MP): ${rightHandLandmarks ? 'yes' : 'no'}`
         + `\nleftHand(MP): ${leftHandLandmarks ? 'yes' : 'no'}`
         + `\narmStreak: R=${this._rightArmStreak} L=${this._leftArmStreak}`
-        + `\nRsh->wrist: ${sw(11, 15)}`
-        + `\nLsh->wrist: ${sw(12, 16)}`;
+        + `\nMP12->16: ${sw(12, 16)}`
+        + `\nMP11->15: ${sw(11, 15)}`
+        + `\nrestRUpDir: ${fmtV(rdr)}`
+        + `\nrestLUpDir: ${fmtV(ldr)}`;
     }
 
     // Hand writes: hand-solve only, no longer mix in pose-Z.
