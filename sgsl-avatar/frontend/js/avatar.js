@@ -150,16 +150,21 @@ export class SMPLXAvatar {
   }
 
   /**
-   * Snapshot the world-space direction from each driven bone toward
-   * its child, evaluated at rest. The retarget layer uses these to
-   * compute a quaternion delta that points the bone in a desired
-   * world-space direction without ever touching local Eulers
-   * (which depend on bone-axis conventions we don't control).
+   * Snapshot, per driven bone:
+   *   - Rest world direction: world-space vector from the bone toward
+   *     its child at rest. Used as the "reference direction" the
+   *     retarget layer aligns to a desired world direction each frame.
+   *   - Rest world quaternion: bone.getWorldQuaternion() at rest.
+   *     Needed because the retarget math W_new = Q * W_rest requires
+   *     the bone's actual rest world quat — NOT parentNow * restLocal,
+   *     which drifts whenever the parent has been rotated
+   *     (forearm's parent = upper arm, which we just rotated).
    */
   _snapshotRestWorldDirs(vrm) {
     vrm.scene.updateMatrixWorld(true);
     const BN = THREE.VRMSchema.HumanoidBoneName;
     this._restWorldDirs = {};
+    this._restWorldQuats = {};
 
     const chains = [
       ['RightUpperArm', 'RightLowerArm'],
@@ -177,6 +182,10 @@ export class SMPLXAvatar {
       p.getWorldPosition(pPos);
       c.getWorldPosition(cPos);
       this._restWorldDirs[parentName] = cPos.sub(pPos).normalize();
+
+      const wq = new THREE.Quaternion();
+      p.getWorldQuaternion(wq);
+      this._restWorldQuats[parentName] = wq;
     }
   }
 

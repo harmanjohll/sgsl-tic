@@ -140,37 +140,49 @@ export class SMPLXRetarget {
   }
 
   /**
-   * Rotate a bone in WORLD space so its rest direction aligns with
-   * `desiredWorldDir`. Bypasses local-bone-Euler conventions
-   * entirely — Three.Quaternion.setFromUnitVectors does the axis
-   * math, and we convert back to local using the bone's parent.
+   * Rotate a bone in WORLD space so its rest tip direction aligns with
+   * `desiredWorldDir`. Derivation:
    *
-   * Returns true if applied, false if the rest snapshot is missing.
+   *   The bone has a fixed local tip direction `t` (bone geometry).
+   *   Its world tip direction is (boneWorldQuat) * t.
+   *   At rest: restWorldQuat * t = restWorldDir (snapshotted).
+   *
+   *   We want: W_new * t = desiredWorldDir.
+   *   Let Q = rotation taking restWorldDir → desiredWorldDir.
+   *   Then W_new = Q * restWorldQuat satisfies the equation:
+   *       W_new * t = Q * restWorldQuat * t = Q * restWorldDir = desiredWorldDir.
+   *
+   *   Convert to local under the CURRENT parent:
+   *       newLocal = currentParentWorldQuat⁻¹ * W_new.
+   *
+   * This is correct even when the parent has been rotated (e.g. the
+   * forearm's parent = upper arm, which we just rotated) because we
+   * use the snapshotted rest world quaternion, NOT a recomputation
+   * that assumes the parent is still at rest.
    */
   _pointBoneInWorld(vrm, boneName, desiredWorldDir, lerpAmount = 0.5) {
     if (!this._avatar || !desiredWorldDir) return false;
     const restWorldDir = this._avatar._restWorldDirs?.[boneName];
-    if (!restWorldDir) return false;
+    const restWorldQuat = this._avatar._restWorldQuats?.[boneName];
+    if (!restWorldDir || !restWorldQuat) return false;
 
     const BN = THREE.VRMSchema.HumanoidBoneName;
     const bone = vrm.humanoid.getBoneNode(BN[boneName]);
     if (!bone) return false;
 
-    const restLocalQuat = this._avatar._restTargets?.[BN[boneName]];
-    if (!restLocalQuat) return false;
-
-    // World-space delta that takes restDir → desiredDir.
-    const Qworld = new THREE.Quaternion().setFromUnitVectors(
+    const Q = new THREE.Quaternion().setFromUnitVectors(
       restWorldDir, desiredWorldDir.clone().normalize(),
     );
 
-    // Convert to bone-local: newLocal = parentWorld⁻¹ * Qworld * parentWorld * restLocal.
+    const newWorld = Q.clone().multiply(restWorldQuat);
+
+    // Parent's CURRENT world quaternion — reflects any rotation the
+    // parent has already received this frame (Three.js
+    // getWorldQuaternion calls updateWorldMatrix internally).
     const parentWorld = new THREE.Quaternion();
     bone.parent.getWorldQuaternion(parentWorld);
 
-    const restWorld = parentWorld.clone().multiply(restLocalQuat);
-    const newWorld = Qworld.clone().multiply(restWorld);
-    const newLocal = parentWorld.clone().invert().multiply(newWorld);
+    const newLocal = parentWorld.invert().multiply(newWorld);
 
     bone.quaternion.slerp(newLocal, lerpAmount);
     return true;
