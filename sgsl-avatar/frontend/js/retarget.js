@@ -1,13 +1,22 @@
 /* ============================================================
    SgSL Avatar — Kalidokit Retargeting
    Derived from Kalidokit demo script.js (VRM 0.x API).
-   Changes vs demo:
-   - results.ea → results.za for MediaPipe v0.5
-   - Visibility gating on pose + hand landmarks
-   - Undefined-safe finger writes (skip instead of zeroing)
-   - Video element is injected by the caller (not hard-coded)
-   - Torso dampened further; Hips position transfer removed
-     (SgSL signer stays planted — prevents floating / tilt)
+
+   Diverges from the demo where necessary for laptop-webcam signing:
+   - Arms are gated per-side with 5-frame hysteresis so MediaPipe
+     hand-detection flicker doesn't collapse Mei to rest.
+   - Upper-arm rotation is computed DIRECTLY from the 2D
+     shoulder→wrist vector when the hand is detected. Kalidokit's
+     pose solver under-shoots arm height when the elbow is off-frame
+     (it extrapolates world-z from the torso and believes itself).
+     We still use Kalidokit for the elbow bend and the "hands down"
+     fallback.
+   - Wrist rotation drops the pose-solver's z component (the same
+     hallucination that caused under-shoot was rotating the hand
+     onto a bad plane, so open palms rendered as curled fingers).
+   - Torso dampened; Hips position transfer removed (SgSL signer
+     stays planted, prevents floating/tilt).
+   - Legs are never driven (avatar.js holds them in rest).
    ============================================================ */
 
 import * as Kalidokit from 'kalidokit';
@@ -19,11 +28,15 @@ const lerp = Kalidokit.Vector.lerp;
 const FINGER_NAMES = ['Ring','Index','Middle','Thumb','Little'];
 const FINGER_SEGMENTS = ['Proximal','Intermediate','Distal'];
 
-// Minimum visibility thresholds. Below these we skip the solve
-// rather than feed Kalidokit garbage landmarks.
 const POSE_MIN_VISIBLE_LMS = 20;   // of 33
 const POSE_VIS_THRESH = 0.5;
-const HAND_MIN_VISIBLE_LMS = 15;   // of 21
+const HAND_MIN_VISIBLE_LMS = 12;   // of 21 (lowered from 15; we now have hysteresis)
+const WRIST_VIS_THRESH = 0.5;
+
+// Hysteresis: once an arm is "on", it can absorb up to this many
+// consecutive failure frames before we start slerping it back to
+// rest. 5 frames at ~30 fps = ~160 ms grace window.
+const ARM_HYSTERESIS_FRAMES = 5;
 
 let oldLookTarget = new THREE.Euler();
 
@@ -33,8 +46,15 @@ export class SMPLXRetarget {
     this._dc = 0;
     this._video = null;
     this._avatar = null;
+    // Hysteresis counters per arm. Treated as "arm is on" whenever > 0.
+    this._rightArmStreak = 0;
+    this._leftArmStreak = 0;
   }
-  reset() { oldLookTarget = new THREE.Euler(); }
+  reset() {
+    oldLookTarget = new THREE.Euler();
+    this._rightArmStreak = 0;
+    this._leftArmStreak = 0;
+  }
 
   /** Caller wires up a video element (recorder) or null (viewer). */
   setVideo(video) { this._video = video || null; }
@@ -43,7 +63,7 @@ export class SMPLXRetarget {
   setAvatar(avatar) { this._avatar = avatar || null; }
 
   _rigRotation(vrm, name, rotation, dampener = 1, lerpAmount = 0.3) {
-    if (!vrm || !rotation) return;  // skip undefined — don't zero the bone
+    if (!vrm || !rotation) return;
     const Part = vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName[name]);
     if (!Part) return;
     const euler = new THREE.Euler(
@@ -103,12 +123,20 @@ export class SMPLXRetarget {
     if (vrm.lookAt && vrm.lookAt.applyer) vrm.lookAt.applyer.lookAt(lookTarget);
   }
 
-  _writeHand(vrm, side, riggedPose, riggedHand) {
+  _writeHand(vrm, side, riggedHand) {
     if (!riggedHand) return;
     const wrist = riggedHand[`${side}Wrist`];
-    const poseWrist = riggedPose[`${side}Hand`];
-    if (wrist && poseWrist) {
-      this._rigRotation(vrm, `${side}Hand`, { z: poseWrist.z, y: wrist.y, x: wrist.x });
+    if (wrist) {
+      // Drop the pose-solver's wrist z. It was a Kalidokit-demo
+      // pattern that only held up when the full body was in frame.
+      // In laptop crops, pose-z is hallucinated and tilts the palm
+      // onto a bad plane, so open hands render as curls. Use only
+      // the hand-solve's own xyz.
+      this._rigRotation(vrm, `${side}Hand`, {
+        x: wrist.x,
+        y: wrist.y,
+        z: wrist.z ?? 0,
+      });
     }
     for (const f of FINGER_NAMES) {
       for (const s of FINGER_SEGMENTS) {
@@ -117,6 +145,47 @@ export class SMPLXRetarget {
         if (rot) this._rigRotation(vrm, key, rot);
       }
     }
+  }
+
+  /**
+   * Compute upper-arm Euler directly from MediaPipe 2D shoulder→wrist.
+   * This sidesteps Kalidokit's pose solver, which under-shoots arm
+   * height when the elbow is extrapolated (laptop crop case).
+   *
+   * We return an object compatible with _rigRotation:
+   *  { x, y, z, rotationOrder }.
+   *
+   * `side` is "Right" or "Left" from the SIGNER'S perspective.
+   * `shoulder`, `wrist` are MediaPipe 2D landmarks (x,y in [0..1]).
+   */
+  _directUpperArm(side, shoulder, wrist) {
+    if (!shoulder || !wrist) return null;
+    // MediaPipe 2D convention: +x right, +y down.
+    // Rest upper-arm in the VRM hangs straight down (shoulder→wrist
+    // vector pointing +y in the image).
+    const dx = wrist.x - shoulder.x;
+    const dy = wrist.y - shoulder.y;
+
+    // Angle from straight-down, measured CCW when viewed from the
+    // front. atan2(dx, dy): 0 = straight down, +π/2 = arm out to
+    // the signer's right (camera's left side of frame).
+    const angle = Math.atan2(dx, dy);
+
+    // For a VRM facing the camera (rotated Math.PI in the scene):
+    //   RightUpperArm.rotation.z > 0 raises the right arm
+    //   LeftUpperArm.rotation.z  < 0 raises the left arm
+    // The sign flip takes care of the mirror.
+    const sign = (side === "Right") ? 1 : -1;
+    const zRot = sign * angle;
+
+    // Pitch (x rotation) — use the horizontal distance from shoulder
+    // to wrist as a very rough proxy for "how forward" the hand is.
+    // Sign language is mostly frontal, so keep this small and let
+    // Kalidokit's lower-arm handle forward reach.
+    const horizontalReach = Math.abs(dx);
+    const xRot = -0.2 * clamp(horizontalReach - 0.15, 0, 1);
+
+    return { x: xRot, y: 0, z: zRot, rotationOrder: "XYZ" };
   }
 
   applyFromMediaPipe(vrm, results) {
@@ -142,7 +211,8 @@ export class SMPLXRetarget {
         + `\npose2D: ${pose2DLandmarks ? pose2DLandmarks.length + ' lm' : 'NULL'}`
         + `\nface: ${faceLandmarks ? faceLandmarks.length + ' lm' : 'NULL'}`
         + `\nrightHand(MP): ${rightHandLandmarks ? 'yes' : 'no'}`
-        + `\nleftHand(MP): ${leftHandLandmarks ? 'yes' : 'no'}`;
+        + `\nleftHand(MP): ${leftHandLandmarks ? 'yes' : 'no'}`
+        + `\narmStreak: R=${this._rightArmStreak} L=${this._leftArmStreak}`;
     }
 
     if (faceLandmarks && faceLandmarks.length >= 468) {
@@ -154,51 +224,73 @@ export class SMPLXRetarget {
       ? this._countVisible(pose2DLandmarks) >= POSE_MIN_VISIBLE_LMS
       : false;
 
-    // Per-arm trust gate. MediaPipe returns pose landmarks even for
-    // limbs that are off-frame (coordinates are extrapolated from the
-    // visible torso), so we can't write every arm unconditionally.
-    //
-    // But we also can't require both elbow AND wrist visibility: on
-    // a laptop webcam, raising a hand to signing height puts the
-    // wrist in frame while the elbow drops off the bottom. Requiring
-    // both would make the avatar ignore every one-hand sign.
-    //
-    // So: trust an arm if MediaPipe detected that hand (hand
-    // detection is far more reliable than pose-elbow visibility), OR
-    // the wrist landmark has decent visibility as a fallback for the
+    // Raw per-frame "arm is trustworthy" signal. Hand detection is
+    // the strong signal; wrist visibility is a fallback for the
     // no-hand-raised case.
-    const WRIST_VIS_THRESH = 0.5;
     const vis = (i) => pose2DLandmarks?.[i]?.visibility ?? 0;
     const handDetected = (lms) =>
       lms && this._countVisible(lms, 0) >= HAND_MIN_VISIBLE_LMS;
     // MediaPipe pose wrist indices: 15 = signer's right, 16 = signer's left.
-    const signerRightArmOk = handDetected(rightHandLandmarks) || vis(15) >= WRIST_VIS_THRESH;
-    const signerLeftArmOk  = handDetected(leftHandLandmarks)  || vis(16) >= WRIST_VIS_THRESH;
+    const rawRightOk = handDetected(rightHandLandmarks) || vis(15) >= WRIST_VIS_THRESH;
+    const rawLeftOk  = handDetected(leftHandLandmarks)  || vis(16) >= WRIST_VIS_THRESH;
+
+    // Hysteresis: fill the streak up to MAX when the raw signal is
+    // good; decrement when it's bad. Arm is "on" whenever > 0.
+    const bump = (streak, ok) => ok
+      ? ARM_HYSTERESIS_FRAMES
+      : Math.max(0, streak - 1);
+    this._rightArmStreak = bump(this._rightArmStreak, rawRightOk);
+    this._leftArmStreak  = bump(this._leftArmStreak,  rawLeftOk);
+    const signerRightArmOn = this._rightArmStreak > 0;
+    const signerLeftArmOn  = this._leftArmStreak  > 0;
 
     if (poseVisible && pose3DLandmarks) {
       riggedPose = Kalidokit.Pose.solve(pose3DLandmarks, pose2DLandmarks, solveOpts);
       if (riggedPose) {
         if (this._avatar) this._avatar.markActive();
+
         // Torso: small dampeners so MediaPipe noise doesn't tilt the
-        // avatar. Hips position transfer is intentionally disabled —
-        // SgSL signer stays planted; transferring MP hip position
-        // causes floating.
+        // avatar. Hips position transfer is intentionally disabled.
         this._rigRotation(vrm, "Hips", riggedPose.Hips.rotation, 0.2, 0.15);
         this._rigRotation(vrm, "Chest", riggedPose.Spine, 0.1, 0.15);
         this._rigRotation(vrm, "Spine", riggedPose.Spine, 0.2, 0.15);
 
-        // Arms: only write the ones we actually saw. The other arm
-        // gets slerped back toward rest so it doesn't freeze in the
-        // last hallucinated pose.
-        if (signerRightArmOk) {
-          this._rigRotation(vrm, "RightUpperArm", riggedPose.RightUpperArm, 1, 0.65);
+        // MediaPipe 2D shoulders: 11 = signer's right, 12 = signer's left.
+        const rightShoulder = pose2DLandmarks?.[11];
+        const leftShoulder  = pose2DLandmarks?.[12];
+        // Hand wrist landmark within a hand array is index 0.
+        const rightWrist = rightHandLandmarks?.[0];
+        const leftWrist  = leftHandLandmarks?.[0];
+
+        // Right arm
+        if (signerRightArmOn) {
+          // Prefer direct 2D computation when we have hand + shoulder.
+          // It bypasses Kalidokit's elbow extrapolation, which was
+          // under-shooting arm height on laptop crops.
+          const direct = (rightWrist && rightShoulder)
+            ? this._directUpperArm("Right", rightShoulder, rightWrist)
+            : null;
+          this._rigRotation(
+            vrm, "RightUpperArm",
+            direct || riggedPose.RightUpperArm,
+            1, 0.65,
+          );
           this._rigRotation(vrm, "RightLowerArm", riggedPose.RightLowerArm, 1, 0.65);
         } else if (this._avatar) {
           this._avatar.slerpToRest(["RightUpperArm", "RightLowerArm", "RightHand"], 0.18);
         }
-        if (signerLeftArmOk) {
-          this._rigRotation(vrm, "LeftUpperArm",  riggedPose.LeftUpperArm,  1, 0.65);
-          this._rigRotation(vrm, "LeftLowerArm",  riggedPose.LeftLowerArm,  1, 0.65);
+
+        // Left arm
+        if (signerLeftArmOn) {
+          const direct = (leftWrist && leftShoulder)
+            ? this._directUpperArm("Left", leftShoulder, leftWrist)
+            : null;
+          this._rigRotation(
+            vrm, "LeftUpperArm",
+            direct || riggedPose.LeftUpperArm,
+            1, 0.65,
+          );
+          this._rigRotation(vrm, "LeftLowerArm", riggedPose.LeftLowerArm, 1, 0.65);
         } else if (this._avatar) {
           this._avatar.slerpToRest(["LeftUpperArm", "LeftLowerArm", "LeftHand"], 0.18);
         }
@@ -206,17 +298,15 @@ export class SMPLXRetarget {
       }
     }
 
-    // Hand writes require the hand itself to have been detected.
-    // We don't re-gate on arm visibility here: if the hand was seen,
-    // the wrist bone is trustworthy.
-    if (handDetected(leftHandLandmarks) && riggedPose) {
+    // Hand writes: hand-solve only, no longer mix in pose-Z.
+    if (handDetected(leftHandLandmarks)) {
       riggedLeftHand = Kalidokit.Hand.solve(leftHandLandmarks, "Left");
-      this._writeHand(vrm, "Left", riggedPose, riggedLeftHand);
+      this._writeHand(vrm, "Left", riggedLeftHand);
     }
 
-    if (handDetected(rightHandLandmarks) && riggedPose) {
+    if (handDetected(rightHandLandmarks)) {
       riggedRightHand = Kalidokit.Hand.solve(rightHandLandmarks, "Right");
-      this._writeHand(vrm, "Right", riggedPose, riggedRightHand);
+      this._writeHand(vrm, "Right", riggedRightHand);
     }
 
     return { hasPose: !!riggedPose, hasLeft: !!riggedLeftHand, hasRight: !!riggedRightHand };
