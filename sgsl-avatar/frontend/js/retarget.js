@@ -276,10 +276,61 @@ export class SMPLXRetarget {
     const faceLandmarks = results.faceLandmarks;
     const pose3DLandmarks = results.za || results.ea;
     const pose2DLandmarks = results.poseLandmarks;
-    // MediaPipe reports hands as the camera sees them; Kalidokit's
-    // demo swaps so "Left" refers to the signer's own left hand.
-    const leftHandLandmarks = results.rightHandLandmarks;
-    const rightHandLandmarks = results.leftHandLandmarks;
+
+    // ─── Handedness disambiguation ─────────────────────────────
+    //
+    // MediaPipe Holistic occasionally mislabels which hand is which
+    // (especially when one hand is held high near the face and the
+    // other is at the hip — both palms are oriented similarly to the
+    // camera). When that happens, the MP-labeled "leftHandLandmarks"
+    // and "rightHandLandmarks" arrays are swapped, and our retarget
+    // drives the wrong avatar arm with the wrong data.
+    //
+    // Geometric truth holds even when MP's labels lie: in the raw
+    // (unmirrored) camera frame, the user's RIGHT hand is always to
+    // the image-LEFT of their body midline (= midpoint of shoulders),
+    // and their LEFT hand is to the image-RIGHT.
+    //
+    // We override MP's labels by sorting any detected hands by their
+    // wrist x relative to the shoulder midline. The resulting
+    // assignment matches the user's anatomy regardless of MP's call.
+    const ls = pose2DLandmarks?.[11];
+    const rs = pose2DLandmarks?.[12];
+    const midX = (ls && rs) ? (ls.x + rs.x) / 2 : null;
+
+    const hands = [];
+    if (results.leftHandLandmarks?.[0])  hands.push({ lm: results.leftHandLandmarks,  x: results.leftHandLandmarks[0].x  });
+    if (results.rightHandLandmarks?.[0]) hands.push({ lm: results.rightHandLandmarks, x: results.rightHandLandmarks[0].x });
+
+    let userRight = null, userLeft = null;
+    if (midX !== null && hands.length > 0) {
+      // Image-left of midline = user's anatomical RIGHT.
+      const leftOfMid  = hands.filter(h => h.x <  midX);
+      const rightOfMid = hands.filter(h => h.x >= midX);
+      if (leftOfMid.length === 1 && rightOfMid.length === 1) {
+        userRight = leftOfMid[0].lm;
+        userLeft  = rightOfMid[0].lm;
+      } else if (leftOfMid.length === 1 && rightOfMid.length === 0) {
+        userRight = leftOfMid[0].lm;
+      } else if (rightOfMid.length === 1 && leftOfMid.length === 0) {
+        userLeft = rightOfMid[0].lm;
+      } else {
+        // Both hands ended up on the same side of the midline (rare —
+        // typically a crossed-arms gesture). Fall back to MP labels.
+        userLeft  = results.leftHandLandmarks  || null;
+        userRight = results.rightHandLandmarks || null;
+      }
+    } else {
+      // No body midline available — trust MP labels.
+      userLeft  = results.leftHandLandmarks  || null;
+      userRight = results.rightHandLandmarks || null;
+    }
+
+    // Mirror retargeting: user's RIGHT hand drives Mei's LEFT bones,
+    // user's LEFT hand drives Mei's RIGHT bones. Names below match
+    // the side accounting in the retargeting block.
+    const leftHandLandmarks  = userRight;  // → drives Mei.Left*
+    const rightHandLandmarks = userLeft;   // → drives Mei.Right*
 
     const solveOpts = this._video
       ? { runtime: "mediapipe", video: this._video }
@@ -441,12 +492,21 @@ export class SMPLXRetarget {
       const rdr = restDirs?.RightUpperArm;
       const ldr = restDirs?.LeftUpperArm;
       const fmtV = (v) => v ? `(${v.x.toFixed(2)},${v.y.toFixed(2)},${v.z.toFixed(2)})` : 'NULL';
+      // Where the disambiguated user-right/user-left hands ended up
+      // in the local var names that drive Mei. After the geometric
+      // override:
+      //   userLeft  → local rightHandLandmarks → drives Mei.Right*
+      //   userRight → local leftHandLandmarks  → drives Mei.Left*
+      const mpHands = (results.leftHandLandmarks ? 'L' : '-')
+                    + (results.rightHandLandmarks ? 'R' : '-');
+      const disHands = (rightHandLandmarks ? 'L' : '-')   // → user-left
+                     + (leftHandLandmarks  ? 'R' : '-');  // → user-right
       this._lastDebug = `Frame: ${this._dc}`
         + `\npose3D: ${pose3DLandmarks ? pose3DLandmarks.length + ' lm' : 'NULL'}`
         + `\npose2D: ${pose2DLandmarks ? pose2DLandmarks.length + ' lm' : 'NULL'}`
         + `\nface: ${faceLandmarks ? faceLandmarks.length + ' lm' : 'NULL'}`
-        + `\nrightHand(MP): ${rightHandLandmarks ? 'yes' : 'no'}`
-        + `\nleftHand(MP): ${leftHandLandmarks ? 'yes' : 'no'}`
+        + `\nMP labels (L/R hand): ${mpHands}`
+        + `\nGeom user (L/R hand): ${disHands}`
         + `\narmStreak: R=${this._rightArmStreak} L=${this._leftArmStreak}`
         + `\nMP12->16: ${sw(12, 16)}`
         + `\nMP11->15: ${sw(11, 15)}`
