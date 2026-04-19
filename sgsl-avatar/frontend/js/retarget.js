@@ -204,13 +204,18 @@ export class SMPLXRetarget {
 
   /**
    * Compute a desired arm direction in avatar world space from a 2D
-   * shoulder→wrist vector in MediaPipe image coordinates.
+   * `from` → `to` vector in MediaPipe image coordinates.
    *
-   * Image: +x right, +y down, no z.
-   * Avatar world (after vrm.scene.rotation.y = π): +Y up, +X to
-   * viewer's RIGHT (after the 180° rotation, world +X is on the
-   * viewer's right; verified by restLUpDir = (+0.36, ...) for Mei's
-   * left arm which appears on viewer's right).
+   * When a calibration rest-offset key is supplied AND the current
+   * retarget instance has calibration data, the rest offset is
+   * subtracted from the raw image delta BEFORE building the world
+   * vector. That way: user at rest → zero deflection → (null
+   * returned) → Mei stays at her current pose; user raises → real
+   * deflection survives → Mei responds. Without this subtraction,
+   * the per-user bias of "where does your wrist sit when you're
+   * standing neutrally" (varies with camera angle, body
+   * proportions, seated vs standing) leaked into Mei's arm pose
+   * and Mei sat in a subtly-wrong-looking "rest".
    *
    * Mapping image → world axes:
    *   - X: NEGATE. The raw camera is unmirrored, so the user's right
@@ -218,15 +223,30 @@ export class SMPLXRetarget {
    *     world -X (viewer's left). For the user's right hand at
    *     face level (image dx ~ -0.15) we want Mei's left arm
    *     (world +X) to extend to viewer's RIGHT — i.e., world dx > 0.
-   *     So we negate. Without this negation, Mei's arms fold across
-   *     her chest instead of extending outward.
+   *     So we negate.
    *   - Y: NEGATE (image-down → world-up).
    *   - Z: 0 (sign language is mostly frontal).
+   *
+   * restOffsetKey is one of:
+   *   - 'leftShoulderElbow', 'leftElbowWrist'
+   *   - 'rightShoulderElbow', 'rightElbowWrist'
+   * matching MediaPipe anatomical side names (leftShoulder = MP[11]).
+   * Caller picks the correct key per its own side accounting.
    */
-  _imageToWorldArmDir(shoulder2D, wrist2D) {
-    if (!shoulder2D || !wrist2D) return null;
-    const dx = wrist2D.x - shoulder2D.x;
-    const dy = wrist2D.y - shoulder2D.y;
+  _imageToWorldArmDir(from2D, to2D, restOffsetKey = null) {
+    if (!from2D || !to2D) return null;
+    let dx = to2D.x - from2D.x;
+    let dy = to2D.y - from2D.y;
+
+    // Subtract the user's calibrated rest offset for this segment
+    // so the output is "deflection from rest" rather than raw
+    // image-space direction.
+    const offset = restOffsetKey ? this._calibration?.restOffsets?.[restOffsetKey] : null;
+    if (offset) {
+      dx -= offset.dx;
+      dy -= offset.dy;
+    }
+
     const v = new THREE.Vector3(-dx, -dy, 0);
     if (v.lengthSq() < 1e-6) return null;
     return v.normalize();
@@ -454,16 +474,27 @@ export class SMPLXRetarget {
       //   i.e., user's anatomical RIGHT side: shoulder MP[12],
       //   elbow MP[14], wrist MP[16]. We drive Mei's Left* bones.
 
+      // Side accounting crib (don't re-derive, just read):
+      //   signerRightArmOn drives Mei's RIGHT bones.
+      //   It's triggered by the user's ANATOMICAL LEFT hand
+      //   (via the swap at the top of this function).
+      //   Pose indices: MP[11] L-shoulder, MP[13] L-elbow, MP[15] L-wrist.
+      //   So the calibration rest-offset keys are the "left*" ones.
+      //
+      //   Symmetric story for signerLeftArmOn → Mei's LEFT bones,
+      //   driven by user's anatomical RIGHT (MP[12]/[14]/[16]),
+      //   reads the "right*" rest offsets.
+
       if (signerRightArmOn) {
         const sh = pose2DLandmarks[11];
         const wr = pickWrist(rightHandLandmarks, 15);
         const el = pickElbow(13, sh, wr);
         if (sh && el) {
-          const upDir = this._imageToWorldArmDir(sh, el);
+          const upDir = this._imageToWorldArmDir(sh, el, 'leftShoulderElbow');
           if (upDir) this._pointBoneInWorld(vrm, "RightUpperArm", upDir, 0.7);
         }
         if (el && wr) {
-          const loDir = this._imageToWorldArmDir(el, wr);
+          const loDir = this._imageToWorldArmDir(el, wr, 'leftElbowWrist');
           if (loDir) this._pointBoneInWorld(vrm, "RightLowerArm", loDir, 0.7);
         }
       } else if (this._avatar) {
@@ -475,11 +506,11 @@ export class SMPLXRetarget {
         const wr = pickWrist(leftHandLandmarks, 16);
         const el = pickElbow(14, sh, wr);
         if (sh && el) {
-          const upDir = this._imageToWorldArmDir(sh, el);
+          const upDir = this._imageToWorldArmDir(sh, el, 'rightShoulderElbow');
           if (upDir) this._pointBoneInWorld(vrm, "LeftUpperArm", upDir, 0.7);
         }
         if (el && wr) {
-          const loDir = this._imageToWorldArmDir(el, wr);
+          const loDir = this._imageToWorldArmDir(el, wr, 'rightElbowWrist');
           if (loDir) this._pointBoneInWorld(vrm, "LeftLowerArm", loDir, 0.7);
         }
       } else if (this._avatar) {

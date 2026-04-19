@@ -367,12 +367,75 @@ function finishCalibration() {
   // distance from the camera).
   calibBaseline.armReach = computeArmReach(calibBaseline.poses);
 
+  // Per-segment rest offsets. These are the 2D image-space vectors
+  // from shoulder→elbow and elbow→wrist WHEN THE USER IS AT REST
+  // (arms at sides). The retargeter subtracts these from the live
+  // per-frame shoulder→elbow and elbow→wrist vectors to produce
+  // "deflection from rest" — so that (a) Mei's arm sits at rest
+  // when the user's arm is at rest regardless of camera framing,
+  // and (b) raising the user's arm produces a direction that's
+  // already rest-relative.
+  //
+  // Naming: "left*" and "right*" match MediaPipe's anatomical side
+  // labels (leftShoulder = MP[11] = user's anatomical left). The
+  // retargeter looks these up via its own side accounting.
+  calibBaseline.restOffsets = computeRestOffsets(calibBaseline.poses);
+
   setRecStatus(`Calibration complete (${calibBaseline.poses.length} anchors). You can record now.`, 'success');
   // Push reach data into the live retarget so the next frame
   // benefits immediately; for playback it travels with the saved
   // sign JSON.
   if (retarget) retarget.setCalibration(calibBaseline);
   updateFramingGate(latestFraming);
+}
+
+/**
+ * Per-segment rest offsets from the rest anchor. Each offset is a
+ * {dx, dy} pair in normalized image coordinates representing where
+ * the next joint sits relative to the parent joint at rest.
+ *
+ * Fallback: if the elbow landmark wasn't captured (MP sometimes
+ * misses it at laptop crops), we split the shoulder→wrist vector
+ * in half — not anatomically exact but a reasonable straight-arm
+ * approximation. The retargeter falls back further to no
+ * subtraction at all if a key is missing.
+ */
+function computeRestOffsets(poses) {
+  const rest = poses.find(p => p.id === 'rest');
+  if (!rest) return null;
+
+  const seg = (from, to) => ({
+    dx: to[0] - from[0],
+    dy: to[1] - from[1],
+  });
+  const halfway = (sh, wr) => ({
+    dx: (wr[0] - sh[0]) / 2,
+    dy: (wr[1] - sh[1]) / 2,
+  });
+
+  // Elbow presence check: at laptop crops, MP sometimes returns
+  // elbow landmarks that averaged to (0, 0) over the calibration
+  // window (i.e., it never saw them). Treat near-zero elbow as
+  // missing and substitute the midpoint fallback.
+  const elbowOk = (el, sh) => el && !(Math.abs(el[0]) < 1e-6 && Math.abs(el[1]) < 1e-6)
+                           && Math.abs(el[0] - sh[0]) + Math.abs(el[1] - sh[1]) > 1e-4;
+
+  const out = {};
+  if (elbowOk(rest.leftElbow, rest.leftShoulder)) {
+    out.leftShoulderElbow = seg(rest.leftShoulder, rest.leftElbow);
+    out.leftElbowWrist    = seg(rest.leftElbow,    rest.leftWrist);
+  } else {
+    out.leftShoulderElbow = halfway(rest.leftShoulder, rest.leftWrist);
+    out.leftElbowWrist    = halfway(rest.leftShoulder, rest.leftWrist);
+  }
+  if (elbowOk(rest.rightElbow, rest.rightShoulder)) {
+    out.rightShoulderElbow = seg(rest.rightShoulder, rest.rightElbow);
+    out.rightElbowWrist    = seg(rest.rightElbow,    rest.rightWrist);
+  } else {
+    out.rightShoulderElbow = halfway(rest.rightShoulder, rest.rightWrist);
+    out.rightElbowWrist    = halfway(rest.rightShoulder, rest.rightWrist);
+  }
+  return out;
 }
 
 /**
