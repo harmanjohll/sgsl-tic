@@ -29,13 +29,16 @@
     <nav class="tabs">
       <button class="tab active" data-tab="viewer">Viewer</button>
       <button class="tab" data-tab="record">Record</button>
+      <a class="tab" href="/editor">Pose Editor</a>
     </nav>
   </header>
 
   <main id="tab-viewer" class="main tab-content active">
     <aside class="sidebar">
-      <h2 class="sidebar-title">Sign Library</h2>
-      <div id="sign-list" class="sign-list"><p class="hint">Loading signs...</p></div>
+      <h2 class="sidebar-title">Curated Library</h2>
+      <div id="sign-list-curated" class="sign-list"><p class="hint">Loading...</p></div>
+      <h2 class="sidebar-title" style="margin-top:16px;">Recordings</h2>
+      <div id="sign-list-recorded" class="sign-list"><p class="hint">Loading...</p></div>
     </aside>
     <section class="viewer">
       <div id="avatar-viewport" class="viewport"></div>

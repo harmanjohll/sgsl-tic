@@ -34,7 +34,17 @@ storage = make_storage(SIGNS_DIR)
 
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 2          # current landmark-capture schema (recorder)
+SCHEMA_VERSION_CURATED = 3  # quaternion-keyframe schema (pose editor)
+
+# VRM humanoid bones a curated sign MUST animate at minimum. Curated
+# signs that omit even one of these on every keyframe are rejected.
+# Other bones (fingers, neck, hips, etc.) are optional.
+REQUIRED_CURATED_BONES = {
+    "RightUpperArm", "LeftUpperArm",
+    "RightLowerArm", "LeftLowerArm",
+    "RightHand", "LeftHand",
+}
 
 
 def _sanitize(label: str) -> str:
@@ -42,7 +52,7 @@ def _sanitize(label: str) -> str:
 
 
 def _validate_v2(landmarks: list) -> None:
-    """Reject payloads that are missing the fields playback needs."""
+    """Reject landmark-capture payloads missing fields playback needs."""
     if not landmarks or len(landmarks) < 5:
         raise HTTPException(status_code=400, detail="Too few frames (minimum 5)")
 
@@ -59,6 +69,53 @@ def _validate_v2(landmarks: list) -> None:
             status_code=400,
             detail="Schema v2 requires poseWorld on >=80% of frames",
         )
+
+
+def _validate_v3_curated(keyframes: list) -> None:
+    """Reject curated payloads that don't carry enough bone data to play.
+
+    A curated sign is a list of {t, bones} keyframes where t is ms from
+    sign start and bones is a dict of VRM-humanoid-bone-name → quaternion
+    (4-element [x,y,z,w] array). The viewer slerps quaternions between
+    consecutive keyframes; it does NOT run retargeting on these.
+    """
+    if not keyframes or len(keyframes) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Curated sign needs at least 2 keyframes (start + end pose)",
+        )
+
+    for i, kf in enumerate(keyframes):
+        if not isinstance(kf, dict):
+            raise HTTPException(status_code=400, detail=f"Keyframe {i} not an object")
+        if "t" not in kf or not isinstance(kf["t"], (int, float)):
+            raise HTTPException(status_code=400, detail=f"Keyframe {i} missing numeric 't'")
+        bones = kf.get("bones")
+        if not isinstance(bones, dict):
+            raise HTTPException(status_code=400, detail=f"Keyframe {i} missing 'bones' dict")
+        for bname, q in bones.items():
+            if not isinstance(q, list) or len(q) != 4:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Keyframe {i} bone '{bname}' must be a 4-element quaternion [x,y,z,w]",
+                )
+
+    # Require core arm bones to appear on at least one keyframe each —
+    # the editor would naturally write them; missing all of them on
+    # every frame is a structural error, not just an unused bone.
+    seen: set[str] = set()
+    for kf in keyframes:
+        seen.update(kf["bones"].keys())
+    missing = REQUIRED_CURATED_BONES - seen
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Curated sign missing bones: {sorted(missing)}",
+        )
+
+    ts = [kf["t"] for kf in keyframes]
+    if ts != sorted(ts):
+        raise HTTPException(status_code=400, detail="Keyframes must be in ascending 't' order")
 
 
 @app.get("/api/signs")
@@ -85,6 +142,7 @@ async def delete_sign(label: str):
 
 @app.post("/api/sign")
 async def save_sign(request: Request):
+    """Save a recorded (landmark-capture) sign — schema v2."""
     body = await request.json()
     label = body.get("label", "").strip().lower()
     landmarks = body.get("landmarks", [])
@@ -110,6 +168,7 @@ async def save_sign(request: Request):
     sign_data = {
         "label": safe,
         "schema_version": SCHEMA_VERSION,
+        "type": "recorded",
         "landmarks": landmarks,
         "calibration": calibration,
         "quality": quality,
@@ -119,6 +178,58 @@ async def save_sign(request: Request):
     storage.save_sign(safe, sign_data)
     print(f"[Save] Sign '{safe}': {len(landmarks)} frames")
     return JSONResponse(content={"status": "ok", "label": safe, "frames": len(landmarks)})
+
+
+@app.post("/api/sign/curated")
+async def save_curated_sign(request: Request):
+    """Save a curated sign authored in the pose editor — schema v3.
+
+    Body shape:
+        {
+          "label": "hello",
+          "duration_ms": 2500,
+          "keyframes": [
+            { "t": 0, "bones": { "RightUpperArm": [x,y,z,w], ... } },
+            ...
+          ],
+          "author": "optional string"
+        }
+    """
+    body = await request.json()
+    label = body.get("label", "").strip().lower()
+    keyframes = body.get("keyframes", [])
+    duration_ms = body.get("duration_ms")
+    author = body.get("author")
+
+    if not label:
+        raise HTTPException(status_code=400, detail="Label is required")
+    safe = _sanitize(label)
+    if not safe:
+        raise HTTPException(status_code=400, detail="Invalid label")
+
+    _validate_v3_curated(keyframes)
+
+    if not isinstance(duration_ms, (int, float)) or duration_ms <= 0:
+        # Derive from keyframes if not supplied.
+        duration_ms = float(keyframes[-1]["t"])
+
+    sign_data = {
+        "label": safe,
+        "schema_version": SCHEMA_VERSION_CURATED,
+        "type": "curated",
+        "duration_ms": duration_ms,
+        "keyframes": keyframes,
+        "author": author,
+        "authored_at": datetime.now(timezone.utc).isoformat(),
+    }
+    storage.save_sign(safe, sign_data)
+    print(f"[Save] Curated sign '{safe}': {len(keyframes)} keyframes, {duration_ms}ms")
+    return JSONResponse(content={
+        "status": "ok",
+        "label": safe,
+        "keyframes": len(keyframes),
+        "duration_ms": duration_ms,
+    })
 
 
 @app.post("/api/admin/purge_legacy")
@@ -141,6 +252,11 @@ async def purge_legacy(request: Request):
 @app.get("/")
 async def index():
     return FileResponse(FRONTEND_DIR / "index.html")
+
+
+@app.get("/editor")
+async def editor():
+    return FileResponse(FRONTEND_DIR / "editor.html")
 
 
 if (FRONTEND_DIR / "js").exists():

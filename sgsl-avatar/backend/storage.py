@@ -68,11 +68,7 @@ class LocalFSStorage(Storage):
                 continue
             with open(fp) as f:
                 data = json.load(f)
-            out.append({
-                "label": data["label"],
-                "frames": len(data.get("landmarks", [])),
-                "schema_version": data.get("schema_version", 1),
-            })
+            out.append(_summarize(data))
         return out
 
 
@@ -148,12 +144,30 @@ class S3Storage(Storage):
                     continue
                 obj = self.client.get_object(Bucket=self.bucket, Key=key)
                 data = json.loads(obj["Body"].read())
-                out.append({
-                    "label": data["label"],
-                    "frames": len(data.get("landmarks", [])),
-                    "schema_version": data.get("schema_version", 1),
-                })
+                out.append(_summarize(data))
         return sorted(out, key=lambda s: s["label"])
+
+
+def _summarize(data: dict[str, Any]) -> dict[str, Any]:
+    """Backend-agnostic list-row shape returned to the viewer.
+
+    Recorded signs report `frames`. Curated signs report `keyframes` and
+    `duration_ms`. Both carry `schema_version` and `type` so the UI can
+    badge them appropriately.
+    """
+    schema = data.get("schema_version", 1)
+    sign_type = data.get("type") or ("curated" if schema >= 3 else "recorded")
+    row: dict[str, Any] = {
+        "label": data["label"],
+        "schema_version": schema,
+        "type": sign_type,
+    }
+    if sign_type == "curated":
+        row["keyframes"] = len(data.get("keyframes", []))
+        row["duration_ms"] = data.get("duration_ms", 0)
+    else:
+        row["frames"] = len(data.get("landmarks", []))
+    return row
 
 
 def make_storage(local_signs_dir: Path) -> Storage:
