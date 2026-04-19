@@ -542,10 +542,13 @@ function startRecording() {
   retarget.reset();
 
   // Starting a fresh recording: hide the post-record review
-  // controls and stop any lingering review playback. Live dots
+  // controls, stop any lingering review playback, and clear the
+  // smoothed-frames cache (else stale smoothed data from a prior
+  // session would leak into the next Map-to-Mei click). Live dots
   // will resume populating the right-pane canvas via
   // onHolisticResults for the duration of the capture.
   stopReviewPlayback();
+  smoothedFrames = null;
   showReviewControls(false);
   const dotsC = document.getElementById('rec-dots-canvas');
   if (dotsC) clearCanvas(dotsC);
@@ -612,9 +615,81 @@ function stopRecording() {
 
 let reviewPlaybackState = { rafId: null, start: 0, i: 0 };
 
+// Populated by mapToMei(): same shape as `frames` (array of
+// { t, pose, poseWorld, face, leftHand, rightHand }), but with
+// landmarks temporally smoothed via a centered moving average.
+// The Mei pane reads from this when non-null so the user sees
+// the smoothed version; the dots pane always reads raw `frames`
+// so it stays a ground-truth reference.
+let smoothedFrames = null;
+
 function showReviewControls(show) {
   const el = document.getElementById('rec-review-controls');
   if (el) el.classList.toggle('hidden', !show);
+}
+
+// ─── Temporal smoothing for Map-to-Mei ─────────────────────
+//
+// Centered moving average with window radius 3 → 7-frame kernel
+// centered on each frame. Applied per-landmark, per-channel
+// (x, y, z). Visibility is copied straight through from the
+// center frame (averaging visibility produces weird in-between
+// values at detection-loss boundaries).
+//
+// Kernel choice rationale: at 30 fps, 7 frames = ~233 ms. SgSL
+// transitions happen on a similar timescale, so this smooths
+// per-landmark jitter (few-pixel noise between adjacent frames)
+// without destroying intentional motion shape. Moving average is
+// deliberately simple — if later we want a one-euro filter or
+// Kalman, we replace this function and callers don't change.
+function smoothFrames(srcFrames, radius = 3) {
+  if (!srcFrames || srcFrames.length === 0) return srcFrames;
+  const channels = ['pose', 'poseWorld', 'face', 'leftHand', 'rightHand'];
+  const out = [];
+  const N = srcFrames.length;
+
+  for (let i = 0; i < N; i++) {
+    const lo = Math.max(0, i - radius);
+    const hi = Math.min(N - 1, i + radius);
+    const center = srcFrames[i];
+    const smoothed = { t: center.t };
+
+    for (const ch of channels) {
+      // Reference shape from the center frame tells us how many
+      // landmarks to expect. Landmarks that are null on the
+      // center frame stay null in the output (we don't invent
+      // data that MediaPipe didn't detect on this frame).
+      const ref = center[ch];
+      if (!ref) { smoothed[ch] = null; continue; }
+      const chOut = new Array(ref.length);
+      for (let k = 0; k < ref.length; k++) {
+        let sx = 0, sy = 0, sz = 0, count = 0;
+        for (let j = lo; j <= hi; j++) {
+          const lm = srcFrames[j]?.[ch]?.[k];
+          if (!lm) continue;
+          sx += lm[0];
+          sy += lm[1];
+          sz += lm[2] ?? 0;
+          count++;
+        }
+        if (count === 0) {
+          // Neighbor window had no data for this landmark — fall
+          // back to the center frame so we don't emit null where
+          // the raw had data.
+          chOut[k] = ref[k];
+          continue;
+        }
+        const avg = [sx / count, sy / count, sz / count];
+        // Preserve the visibility tag from the center frame
+        // unchanged (don't average it).
+        if (ref[k].length > 3) avg.push(ref[k][3]);
+        chOut[k] = avg;
+      }
+      smoothed[ch] = chOut;
+    }
+    out.push(smoothed);
+  }
+  return out;
 }
 
 function startReviewPlayback() {
@@ -633,6 +708,12 @@ function startReviewPlayback() {
   if (retarget) retarget.reset();
   if (avatar) avatar.setPlaying(true);
 
+  // Source for the Mei pane: smoothed frames after Map-to-Mei has
+  // computed them, else fall back to raw. Dots pane always uses raw
+  // `frames` so the user has a ground-truth reference to compare
+  // against whatever Mei is rendering.
+  const meiSrc = smoothedFrames || frames;
+
   const tick = () => {
     const target = performance.now() - reviewPlaybackState.start + baseT;
     while (reviewPlaybackState.i < frames.length - 1
@@ -643,22 +724,29 @@ function startReviewPlayback() {
     if (info) info.textContent = `${reviewPlaybackState.i + 1} / ${frames.length}`;
 
     if (target >= lastT) {
-      const last = frames[frames.length - 1];
-      drawSkeleton(canvas, last);
-      renderPreviewFrame(last);
+      const lastDots = frames[frames.length - 1];
+      const lastMei  = meiSrc[meiSrc.length - 1];
+      drawSkeleton(canvas, lastDots);
+      renderPreviewFrame(lastMei);
       if (avatar) avatar.setPlaying(false);
       reviewPlaybackState.rafId = null;
       setRecStatus('Playback complete. Map to Mei, or save as dots.', 'info');
       return;
     }
 
-    const a = frames[reviewPlaybackState.i];
-    const b = frames[reviewPlaybackState.i + 1];
+    const i = reviewPlaybackState.i;
+    const a  = frames[i];
+    const b  = frames[i + 1];
     const span = Math.max(b.t - a.t, 1);
     const u = Math.min(Math.max((target - a.t) / span, 0), 1);
-    const blended = interp(a, b, u);
-    drawSkeleton(canvas, blended);
-    renderPreviewFrame(blended);
+
+    drawSkeleton(canvas, interp(a, b, u));
+    // Mei uses the parallel-indexed smoothed pair when available.
+    // smoothFrames preserves length + timestamps so i/i+1 align.
+    const aMei = meiSrc[i];
+    const bMei = meiSrc[Math.min(i + 1, meiSrc.length - 1)];
+    renderPreviewFrame(interp(aMei, bMei, u));
+
     reviewPlaybackState.rafId = requestAnimationFrame(tick);
   };
   tick();
@@ -672,16 +760,33 @@ function stopReviewPlayback() {
 
 // ─── Map-to-Mei compute step ───────────────────────────────
 //
-// v1: just re-runs the synced review playback, which drives both
-// the dots canvas AND Mei from the saved frames. Semantically the
-// "compute" hasn't done anything extra yet — the seam is here so
-// v2 can add post-capture smoothing or library-matching before
-// replaying. Naming stays "Map to Mei" so the UX label survives.
+// Applies centered moving-average smoothing to the captured
+// landmarks and stores the result in module-scope `smoothedFrames`.
+// startReviewPlayback() reads smoothedFrames for the Mei pane when
+// it's non-null, so the user visibly sees the compute's effect:
+// dots continue to jitter at per-frame noise scale; Mei animates
+// smoothly.
+//
+// Next: replace smoothFrames with library-matching (if recording
+// is close to a known canonical, play the canonical) or a learned
+// classifier — both swap in here without changing the UI path.
 async function mapToMei() {
   if (!frames.length) return;
-  setRecStatus('Mapping to Mei…', 'loading');
+  const N = frames.length;
+  setRecStatus(`Map-to-Mei: smoothing ${N} frames…`, 'loading');
   stopReviewPlayback();
-  await new Promise(r => setTimeout(r, 30));
+  // Small await so the status text paints before the (fast)
+  // smoothing runs — purely cosmetic.
+  await new Promise(r => setTimeout(r, 20));
+
+  const radius = 3;
+  const t0 = performance.now();
+  smoothedFrames = smoothFrames(frames, radius);
+  const elapsed = (performance.now() - t0).toFixed(0);
+  setRecStatus(
+    `Map-to-Mei: smoothed ${N} frames (${2 * radius + 1}-frame window, ${elapsed}ms). Playing.`,
+    'success',
+  );
   startReviewPlayback();
 }
 
@@ -696,6 +801,7 @@ function saveDotsOnly() {
 
 function discardAndReRecord() {
   stopReviewPlayback();
+  smoothedFrames = null;
   const canvas = document.getElementById('rec-dots-canvas');
   if (canvas) clearCanvas(canvas);
   showReviewControls(false);

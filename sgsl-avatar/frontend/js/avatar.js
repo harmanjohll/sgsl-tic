@@ -49,7 +49,11 @@ export class SMPLXAvatar {
     this.container.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(30, w / h, 0.1, 1000);
-    this.camera.position.set(0.0, 1.35, 1.8);
+    // z pushed from 1.8 → 2.6 (Apr 19 feedback) so Mei fits comfortably
+    // in the narrower Record-tab compare pane (she's sharing horizontal
+    // space with the dots canvas). OrbitControls still active — user
+    // can scroll-zoom in if they want a closer look.
+    this.camera.position.set(0.0, 1.35, 2.6);
 
     this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
     this.controls.screenSpacePanning = true;
