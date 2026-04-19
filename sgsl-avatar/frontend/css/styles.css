@@ -192,6 +192,25 @@ html, body {
 .hint { color: var(--text-dim); font-size: 13px; }
 .hidden { display: none !important; }
 
+/* Recording review: dots playback + Map-to-Mei controls. Mirrors
+   the Viewer's .controls layout so the two tabs feel consistent. */
+.rec-review-controls {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The dots canvas inherits .viewport sizing but needs an explicit
+   display:block so width/height attributes work; hidden class wins. */
+#rec-dots-canvas {
+  display: block;
+  background: #0b0e24;
+}
+
 /* ─── Tabs ─────────────────────────────────── */
 .tabs { display: flex; gap: 4px; margin-left: auto; }
 .tab {

@@ -15,6 +15,7 @@
 import { SMPLXAvatar } from './avatar.js';
 import { SMPLXRetarget } from './retarget.js';
 import { QualityGate, framingScore } from './quality.js';
+import { drawSkeleton, clearCanvas } from './dots.js';
 
 // ─── State ──────────────────────────────────────────────────
 let avatar = null;
@@ -76,6 +77,13 @@ export async function init() {
   document.getElementById('btn-rec-preview')?.addEventListener('click', previewRecording);
   document.getElementById('btn-rec-save')?.addEventListener('click', saveRecording);
   document.getElementById('btn-rec-discard')?.addEventListener('click', discardRecording);
+
+  // Dots-review controls (right pane).
+  document.getElementById('btn-review-play')?.addEventListener('click', startDotsPlayback);
+  document.getElementById('btn-review-scrub')?.addEventListener('click', stopDotsPlayback);
+  document.getElementById('btn-map-to-mei')?.addEventListener('click', mapToMei);
+  document.getElementById('btn-review-keep-dots')?.addEventListener('click', saveDotsOnly);
+  document.getElementById('btn-review-rerecord')?.addEventListener('click', discardAndReRecord);
   document.getElementById('btn-calibrate')?.addEventListener('click', startCalibration);
 
   // Record is disabled until framing is good AND calibration exists.
@@ -500,6 +508,13 @@ function startRecording() {
   startTime = performance.now();
   retarget.reset();
 
+  // Leave the right pane in "live" (Mei mirror) mode during
+  // recording — the camera overlay already shows the live dots,
+  // so Mei-live serves as a "did detection catch what I did?"
+  // sanity read. On Stop we swap to "dots" for review.
+  enterRecordPaneMode('live');
+  stopDotsPlayback();
+
   document.getElementById('btn-rec-start').disabled = true;
   document.getElementById('btn-rec-stop').disabled = false;
   document.getElementById('quality-panel')?.classList.add('hidden');
@@ -527,7 +542,127 @@ function stopRecording() {
 
   lastQuality = QualityGate.analyze(frames);
   showQualityResults(lastQuality);
-  setRecStatus(lastQuality.message, lastQuality.pass ? 'success' : 'error');
+
+  // Enter dots-review mode: the user watches their own landmarks
+  // replay as a skeleton on a clean canvas (no avatar yet). They
+  // decide whether to keep the recording, then optionally trigger
+  // Map-to-Mei. This insulates the save decision from the
+  // retargeter's noise — users judge the CAPTURE, not Mei.
+  enterRecordPaneMode('dots');
+  startDotsPlayback();
+  setRecStatus(
+    `Recording captured (${frames.length} frames, ${((frames[frames.length-1].t - frames[0].t)/1000).toFixed(1)}s). `
+    + 'Review the dot playback. Map to Mei when happy.',
+    lastQuality.pass ? 'success' : 'info',
+  );
+}
+
+// ─── Record right-pane mode ────────────────────────────────
+//
+// The right pane on the Record tab shows one of three views:
+//
+//   "live"  — Mei live-mirrors the camera. Default state. Useful as
+//             a weak reference during recording; not shown during
+//             review because live retargeting is noisy.
+//   "dots"  — Canvas renders captured-frame landmarks as a skeleton.
+//             What the user sees after Stop; the "ground-truth" of
+//             what was captured, no retargeting.
+//   "mei"   — Mei animation derived from the captured frames
+//             (Map-to-Mei result). Shown after the compute step.
+//
+// enterRecordPaneMode toggles visibility of the viewport / canvas /
+// review controls. dotsPlaybackState carries the per-playback
+// cursor + RAF handle so stopDotsPlayback can cancel cleanly.
+function enterRecordPaneMode(mode) {
+  const meiVp = document.getElementById('rec-avatar-viewport');
+  const dotsC = document.getElementById('rec-dots-canvas');
+  const reviewControls = document.getElementById('rec-review-controls');
+
+  if (meiVp)  meiVp.classList.toggle('hidden',  mode !== 'live' && mode !== 'mei');
+  if (dotsC)  dotsC.classList.toggle('hidden',  mode !== 'dots');
+  if (reviewControls) reviewControls.classList.toggle('hidden', mode === 'live');
+
+  currentPaneMode = mode;
+}
+
+let currentPaneMode = 'live';
+let dotsPlaybackState = { rafId: null, start: 0, i: 0 };
+
+function startDotsPlayback() {
+  if (!frames.length) return;
+  const canvas = document.getElementById('rec-dots-canvas');
+  if (!canvas) return;
+  stopDotsPlayback();
+
+  dotsPlaybackState.start = performance.now();
+  dotsPlaybackState.i = 0;
+  const baseT = frames[0].t ?? 0;
+  const lastT = frames[frames.length - 1].t ?? 0;
+
+  const tick = () => {
+    const target = performance.now() - dotsPlaybackState.start + baseT;
+    while (dotsPlaybackState.i < frames.length - 1
+           && frames[dotsPlaybackState.i + 1].t <= target) {
+      dotsPlaybackState.i++;
+    }
+    const info = document.getElementById('rec-review-info');
+    if (info) info.textContent = `${dotsPlaybackState.i + 1} / ${frames.length}`;
+
+    if (target >= lastT) {
+      drawSkeleton(canvas, frames[frames.length - 1]);
+      dotsPlaybackState.rafId = null;
+      return;
+    }
+    drawSkeleton(canvas, frames[dotsPlaybackState.i]);
+    dotsPlaybackState.rafId = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+function stopDotsPlayback() {
+  if (dotsPlaybackState.rafId) cancelAnimationFrame(dotsPlaybackState.rafId);
+  dotsPlaybackState.rafId = null;
+}
+
+// ─── Map-to-Mei compute step ───────────────────────────────
+//
+// Takes the captured landmark frames and produces a Mei animation.
+// v1: runs the existing retargeting pipeline frame-by-frame on
+// timestamps, same as previewRecording, but off the record-review
+// pane so the user sees it next to (instead of instead of) the
+// dots they just approved.
+//
+// Future (same function signature): apply post-capture smoothing
+// before retargeting, and/or match the recording against the
+// curated library and swap in the closest canonical sign. The UI
+// path and storage don't change — we save landmarks and let
+// playback produce Mei.
+async function mapToMei() {
+  if (!frames.length) return;
+  setRecStatus('Mapping to Mei…', 'loading');
+  stopDotsPlayback();
+  enterRecordPaneMode('mei');
+  // Small delay so the pane swap paints before the heavy work.
+  await new Promise(r => setTimeout(r, 30));
+  previewRecording();
+}
+
+function saveDotsOnly() {
+  // Same save path as the existing Save button — the stored JSON
+  // contains raw landmarks; "dots only" vs "mapped to Mei" is a
+  // viewer-side rendering choice, not a schema difference. This
+  // button exists so the user can commit without running the
+  // (slower) Map-to-Mei step first.
+  saveRecording();
+}
+
+function discardAndReRecord() {
+  stopDotsPlayback();
+  const canvas = document.getElementById('rec-dots-canvas');
+  if (canvas) clearCanvas(canvas);
+  enterRecordPaneMode('live');
+  discardRecording();
+  setRecStatus('Ready. Press Record to try again.', 'info');
 }
 
 function showQualityResults(report) {
