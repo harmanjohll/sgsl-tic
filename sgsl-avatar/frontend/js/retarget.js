@@ -20,17 +20,14 @@
       look stick-like at extreme angles but the hand position is
       what matters for sign legibility.
 
-   2. HANDS — split: the WRIST quaternion still comes from
-      Kalidokit.Hand.solve (palm/wrist rotation from 21 landmarks
-      is reliable). The FINGER bones no longer use Kalidokit at
-      all — each segment (Proximal/Intermediate/Distal × 5 fingers
-      × 2 hands) is rotated to align with the image-space vector
-      between the two MediaPipe hand-landmarks that bracket it
-      (MCP→PIP, PIP→DIP, DIP→tip). Same world-space pointing
-      math as the arms, just one chain per finger. This replaced
-      Kalidokit's finger output, which produced inconsistent
-      curls / wrong configurations on the "and" sign and similar
-      finger-shape-driven gestures.
+   2. HANDS (fingers + wrist) use Kalidokit.Hand.solve from the
+      21 hand-landmark feed. Per-landmark direct pointing was
+      attempted and reverted (see plan iteration 5c): setFromUnitVectors
+      has a twist-axis singularity at near-antiparallel vectors,
+      and each finger bone ends up "rolled" at random around its
+      length when the user's hand orientation is far from rest.
+      Bend-angle-only retargeting is the next approach — tracked
+      in the plan, not yet implemented.
 
    3. FACE is still driven by Kalidokit.Face.solve.
 
@@ -253,87 +250,35 @@ export class SMPLXRetarget {
   }
 
   _writeHand(vrm, side, riggedHand) {
-    // Wrist orientation comes from Kalidokit's hand-only solve. It
-    // takes the 21 hand landmarks and computes a palm/wrist rotation
-    // that's typically reliable. We drop the pose-Z mix (hallucinated
-    // when the body's elbow is off-frame) and use only the hand-solve
-    // output.
     if (!riggedHand) return;
     const wrist = riggedHand[`${side}Wrist`];
     if (wrist) {
+      // Drop the pose-solver's wrist z. In laptop crops, pose-z is
+      // hallucinated and tilts the palm onto a bad plane. Use only
+      // the hand-solve's own xyz.
       this._rigRotation(vrm, `${side}Hand`, {
         x: wrist.x,
         y: wrist.y,
         z: wrist.z ?? 0,
       });
     }
-    // Finger bones are NOT written here any more — they're driven
-    // by per-landmark direct pointing in _writeFingersFromLandmarks,
-    // which the caller invokes after _writeHand. The two are split
-    // so the wrist quaternion settles before the finger chain reads
-    // its parent's world quat.
-  }
-
-  // ─── Per-finger landmark pointing ─────────────────────────
-  //
-  // Replaces the Kalidokit-finger-rotation loop with explicit
-  // landmark→bone mapping. MediaPipe's hand landmark indices map
-  // perfectly to the VRM finger chain:
-  //
-  //   Finger     MCP  PIP  DIP  Tip
-  //   Thumb       1    2    3   4
-  //   Index       5    6    7   8
-  //   Middle      9   10   11  12
-  //   Ring       13   14   15  16
-  //   Little     17   18   19  20
-  //
-  // and each VRM finger has 3 bones (Proximal, Intermediate,
-  // Distal), so:
-  //   Proximal     points from MCP toward PIP
-  //   Intermediate points from PIP toward DIP
-  //   Distal       points from DIP toward Tip
-  //
-  // We compute the desired direction per bone in image space
-  // (same convention as arms: x flipped, y flipped, z passed
-  // through from MediaPipe hand-landmark relative depth), then
-  // use _pointBoneInWorld so the bone-axis math is correct.
-  // Process each chain parent-first so children see the updated
-  // parent world quaternion.
-  _writeFingersFromLandmarks(vrm, side, handLandmarks) {
-    if (!handLandmarks || handLandmarks.length < 21) return;
-
-    // Hand-landmark index trios per finger: [MCP, PIP, DIP, tip].
-    const FINGERS = [
-      ['Thumb',  [1, 2, 3, 4]],
-      ['Index',  [5, 6, 7, 8]],
-      ['Middle', [9, 10, 11, 12]],
-      ['Ring',   [13, 14, 15, 16]],
-      ['Little', [17, 18, 19, 20]],
-    ];
-
-    for (const [finger, ids] of FINGERS) {
-      const [mcp, pip, dip, tip] = ids.map(i => handLandmarks[i]);
-      if (!mcp || !pip || !dip || !tip) continue;
-
-      this._pointFingerBone(vrm, `${side}${finger}Proximal`,     mcp, pip);
-      this._pointFingerBone(vrm, `${side}${finger}Intermediate`, pip, dip);
-      this._pointFingerBone(vrm, `${side}${finger}Distal`,       dip, tip);
+    // Fingers: Kalidokit's hand-solver output. Direct
+    // landmark→bone pointing was tried in 8c5e2c9 but introduced
+    // severe finger distortion because Quaternion.setFromUnitVectors
+    // chooses an arbitrary rotation axis for near-antiparallel vectors
+    // (finger rest direction down vs. target direction up, when the
+    // user raises their hand) — twist around the bone's length is
+    // unconstrained, so fingers look curled at random angles. The
+    // next try will be bend-angle-only: compute a single bend axis
+    // per segment and leave twist at rest. Until then, Kalidokit's
+    // solver is the less-wrong option.
+    for (const f of FINGER_NAMES) {
+      for (const s of FINGER_SEGMENTS) {
+        const key = `${side}${f}${s}`;
+        const rot = riggedHand[key];
+        if (rot) this._rigRotation(vrm, key, rot);
+      }
     }
-  }
-
-  _pointFingerBone(vrm, boneName, fromLm, toLm) {
-    if (!fromLm || !toLm) return;
-    // Image-space delta. Negate X (camera-frame mirror) and Y
-    // (image-down → world-up); pass Z through (MediaPipe hand
-    // landmarks include a relative depth z, normalized roughly to
-    // image-space units, so the scale aligns with x/y).
-    const dx = toLm.x - fromLm.x;
-    const dy = toLm.y - fromLm.y;
-    const dz = (toLm.z ?? 0) - (fromLm.z ?? 0);
-    const v = new THREE.Vector3(-dx, -dy, dz);
-    if (v.lengthSq() < 1e-8) return;
-    v.normalize();
-    this._pointBoneInWorld(vrm, boneName, v, 0.6);
   }
 
   applyFromMediaPipe(vrm, results) {
@@ -584,25 +529,21 @@ export class SMPLXRetarget {
     // Hand + finger writes.
     //
     // Wrist orientation: Kalidokit's hand-only solve (palm rotation
-    // from 21 landmarks) — works fine in practice.
-    //
-    // Finger bones: per-landmark direct pointing (NEW). Each finger
-    // segment is rotated so its rest direction aligns with the
-    // image-space vector between the two MediaPipe landmarks that
-    // bracket that segment. Order matters: write the wrist FIRST
-    // so the finger chain reads the updated parent world quaternion;
-    // _pointBoneInWorld uses bone.parent.getWorldQuaternion() which
-    // reflects whatever was just written to the parent.
+    // from 21 landmarks). Finger bones: Kalidokit's solver output,
+    // written inside _writeHand. Per-landmark direct pointing was
+    // attempted in 8c5e2c9 and reverted — it produced severe finger
+    // distortion because setFromUnitVectors has a twist-axis
+    // singularity at near-antiparallel vectors (rest dir down vs
+    // raised-hand target dir up). See the plan file "iteration 5c"
+    // for the next approach (bend-angle only per segment).
     if (handDetected(leftHandLandmarks)) {
       riggedLeftHand = Kalidokit.Hand.solve(leftHandLandmarks, "Left");
       this._writeHand(vrm, "Left", riggedLeftHand);
-      this._writeFingersFromLandmarks(vrm, "Left", leftHandLandmarks);
     }
 
     if (handDetected(rightHandLandmarks)) {
       riggedRightHand = Kalidokit.Hand.solve(rightHandLandmarks, "Right");
       this._writeHand(vrm, "Right", riggedRightHand);
-      this._writeFingersFromLandmarks(vrm, "Right", rightHandLandmarks);
     }
 
     return { hasPose: !!riggedPose, hasLeft: !!riggedLeftHand, hasRight: !!riggedRightHand };
