@@ -194,21 +194,26 @@ export class SMPLXRetarget {
    *
    * Image: +x right, +y down, no z.
    * Avatar world (after vrm.scene.rotation.y = π): +Y up, +X to
-   * viewer's left, +Z toward viewer.
+   * viewer's RIGHT (after the 180° rotation, world +X is on the
+   * viewer's right; verified by restLUpDir = (+0.36, ...) for Mei's
+   * left arm which appears on viewer's right).
    *
-   * The CSS mirrors the camera preview so the user sees themselves
-   * naturally. MediaPipe processes the un-mirrored raw video, but
-   * since both the user's right hand AND Mei's right (as viewed)
-   * end up on the same side of the screen after Mei's 180°
-   * rotation, we can pass image dx through directly. Image dy
-   * negates (image-down → world-up). Z=0 keeps things in the
-   * frontal plane (sign language is mostly frontal).
+   * Mapping image → world axes:
+   *   - X: NEGATE. The raw camera is unmirrored, so the user's right
+   *     side is on image-LEFT (small x). Mei's RIGHT side is on
+   *     world -X (viewer's left). For the user's right hand at
+   *     face level (image dx ~ -0.15) we want Mei's left arm
+   *     (world +X) to extend to viewer's RIGHT — i.e., world dx > 0.
+   *     So we negate. Without this negation, Mei's arms fold across
+   *     her chest instead of extending outward.
+   *   - Y: NEGATE (image-down → world-up).
+   *   - Z: 0 (sign language is mostly frontal).
    */
   _imageToWorldArmDir(shoulder2D, wrist2D) {
     if (!shoulder2D || !wrist2D) return null;
     const dx = wrist2D.x - shoulder2D.x;
     const dy = wrist2D.y - shoulder2D.y;
-    const v = new THREE.Vector3(dx, -dy, 0);
+    const v = new THREE.Vector3(-dx, -dy, 0);
     if (v.lengthSq() < 1e-6) return null;
     return v.normalize();
   }
