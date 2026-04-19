@@ -179,27 +179,82 @@ export class SMPLXAvatar {
     this._restWorldDirs = {};
     this._restWorldQuats = {};
 
-    const chains = [
+    // Arm chain: each bone points toward its child joint at rest.
+    const armChains = [
       ['RightUpperArm', 'RightLowerArm'],
       ['LeftUpperArm',  'LeftLowerArm'],
       ['RightLowerArm', 'RightHand'],
       ['LeftLowerArm',  'LeftHand'],
     ];
 
-    for (const [parentName, childName] of chains) {
-      const p = vrm.humanoid.getBoneNode(BN[parentName]);
-      const c = vrm.humanoid.getBoneNode(BN[childName]);
-      if (!p || !c) continue;
-      const pPos = new THREE.Vector3();
-      const cPos = new THREE.Vector3();
-      p.getWorldPosition(pPos);
-      c.getWorldPosition(cPos);
-      this._restWorldDirs[parentName] = cPos.sub(pPos).normalize();
-
-      const wq = new THREE.Quaternion();
-      p.getWorldQuaternion(wq);
-      this._restWorldQuats[parentName] = wq;
+    // Finger chains: per-side, per-finger, for each segment that has
+    // a meaningful child. Distal segments have no humanoid child bone
+    // (VRM skips fingertip bones), so we approximate the fingertip
+    // direction from the Distal bone's first scene-graph child node
+    // (the geometric bone tip in the rig).
+    const fingerChains = [];
+    for (const side of ['Left', 'Right']) {
+      for (const finger of ['Thumb', 'Index', 'Middle', 'Ring', 'Little']) {
+        fingerChains.push([`${side}${finger}Proximal`,     `${side}${finger}Intermediate`]);
+        fingerChains.push([`${side}${finger}Intermediate`, `${side}${finger}Distal`]);
+      }
     }
+
+    const chains = [...armChains, ...fingerChains];
+
+    for (const [parentName, childName] of chains) {
+      this._snapshotChain(vrm, BN, parentName, childName);
+    }
+
+    // Distal fingertip directions: no humanoid child to read, so use
+    // the Distal bone's first Object3D child (the rig's tip dummy).
+    // If the rig has no such child we fall back to a unit +Y vector
+    // in the bone's local frame, transformed to world.
+    for (const side of ['Left', 'Right']) {
+      for (const finger of ['Thumb', 'Index', 'Middle', 'Ring', 'Little']) {
+        const distalName = `${side}${finger}Distal`;
+        this._snapshotDistalTip(vrm, BN, distalName);
+      }
+    }
+  }
+
+  _snapshotChain(vrm, BN, parentName, childName) {
+    const p = vrm.humanoid.getBoneNode(BN[parentName]);
+    const c = vrm.humanoid.getBoneNode(BN[childName]);
+    if (!p || !c) return;
+    const pPos = new THREE.Vector3();
+    const cPos = new THREE.Vector3();
+    p.getWorldPosition(pPos);
+    c.getWorldPosition(cPos);
+    this._restWorldDirs[parentName] = cPos.sub(pPos).normalize();
+
+    const wq = new THREE.Quaternion();
+    p.getWorldQuaternion(wq);
+    this._restWorldQuats[parentName] = wq;
+  }
+
+  _snapshotDistalTip(vrm, BN, distalName) {
+    const distal = vrm.humanoid.getBoneNode(BN[distalName]);
+    if (!distal) return;
+    const dPos = new THREE.Vector3();
+    distal.getWorldPosition(dPos);
+
+    // Try a child object first; if absent, project +Y in local space
+    // (typical VRM finger-bone "forward" direction) into world.
+    let tipPos = null;
+    if (distal.children && distal.children.length > 0) {
+      tipPos = new THREE.Vector3();
+      distal.children[0].getWorldPosition(tipPos);
+    }
+    if (!tipPos || tipPos.distanceTo(dPos) < 1e-5) {
+      const localTip = new THREE.Vector3(0, 1, 0).multiplyScalar(0.02);
+      tipPos = localTip.applyMatrix4(distal.matrixWorld);
+    }
+
+    this._restWorldDirs[distalName] = tipPos.sub(dPos).normalize();
+    const wq = new THREE.Quaternion();
+    distal.getWorldQuaternion(wq);
+    this._restWorldQuats[distalName] = wq;
   }
 
   /** Called by the retarget layer each frame it writes bones. */
