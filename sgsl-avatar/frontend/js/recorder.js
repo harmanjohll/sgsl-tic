@@ -47,12 +47,17 @@ let latestFraming = null;    // {ok, score, reasons[]}
 //   { id, label, instruction, holdMs }
 // id is short (saved with the calibration), label is what the
 // button shows during that step, instruction is the user prompt.
+//
+// Hold time is 3.5s per step — deliberately long enough to read
+// the instruction, get into the pose, and hold steady for the
+// sample. The user fed back that 1500ms was so fast they couldn't
+// even read the instructions.
 const CALIB_POSES = [
-  { id: 'rest',     label: 'Step 1/5: arms at sides',        instruction: 'Stand naturally. Arms relaxed at your sides. Hold still.', holdMs: 1500 },
-  { id: 'r_chest',  label: 'Step 2/5: right hand at chest',  instruction: 'Right hand flat at your chest, palm toward camera. Hold still.', holdMs: 1500 },
-  { id: 'r_face',   label: 'Step 3/5: right hand at face',   instruction: 'Right hand at face level, palm toward camera. Hold still.', holdMs: 1500 },
-  { id: 'l_chest',  label: 'Step 4/5: left hand at chest',   instruction: 'Left hand flat at your chest, palm toward camera. Hold still.', holdMs: 1500 },
-  { id: 'l_face',   label: 'Step 5/5: left hand at face',    instruction: 'Left hand at face level, palm toward camera. Hold still.', holdMs: 1500 },
+  { id: 'rest',     label: 'Step 1/5: arms at sides',        instruction: 'Stand naturally. Arms relaxed at your sides. Hold still.', holdMs: 3500 },
+  { id: 'r_chest',  label: 'Step 2/5: right hand at chest',  instruction: 'Right hand flat at your chest, palm toward camera. Hold still.', holdMs: 3500 },
+  { id: 'r_face',   label: 'Step 3/5: right hand at face',   instruction: 'Right hand at face level, palm toward camera. Hold still.', holdMs: 3500 },
+  { id: 'l_chest',  label: 'Step 4/5: left hand at chest',   instruction: 'Left hand flat at your chest, palm toward camera. Hold still.', holdMs: 3500 },
+  { id: 'l_face',   label: 'Step 5/5: left hand at face',    instruction: 'Left hand at face level, palm toward camera. Hold still.', holdMs: 3500 },
 ];
 
 let calibrating = false;
@@ -79,8 +84,8 @@ export async function init() {
   document.getElementById('btn-rec-discard')?.addEventListener('click', discardRecording);
 
   // Dots-review controls (right pane).
-  document.getElementById('btn-review-play')?.addEventListener('click', startDotsPlayback);
-  document.getElementById('btn-review-scrub')?.addEventListener('click', stopDotsPlayback);
+  document.getElementById('btn-review-play')?.addEventListener('click', startReviewPlayback);
+  document.getElementById('btn-review-scrub')?.addEventListener('click', stopReviewPlayback);
   document.getElementById('btn-map-to-mei')?.addEventListener('click', mapToMei);
   document.getElementById('btn-review-keep-dots')?.addEventListener('click', saveDotsOnly);
   document.getElementById('btn-review-rerecord')?.addEventListener('click', discardAndReRecord);
@@ -147,6 +152,14 @@ function onHolisticResults(results) {
   }
   const dbg = document.getElementById('rec-debug');
   if (dbg && retarget._lastDebug) dbg.textContent = retarget._lastDebug;
+
+  // 3b) Live dots on the right-pane comparison canvas. Skip when
+  // we're playing back a saved recording (reviewPlaybackState.rafId
+  // is non-null then and owns the canvas).
+  if (!reviewPlaybackState.rafId) {
+    const dotsCanvas = document.getElementById('rec-dots-canvas');
+    if (dotsCanvas) drawSkeleton(dotsCanvas, results);
+  }
 
   // 4) Capture: record frame or calibration sample.
   const frame = extractFrame(results);
@@ -241,8 +254,28 @@ function runCalibrationStep() {
   }
   const step = CALIB_POSES[calibStepIdx];
   calibStepBuf = [];
-  setRecStatus(`${step.label} — ${step.instruction}`, 'loading');
-  setTimeout(() => captureCalibrationStep(), step.holdMs);
+
+  // Show a live countdown so the user can see how much longer to
+  // hold the pose. Tick once per 100ms; status bar carries the
+  // instruction plus a "N.Ns remaining" tail. Previous version
+  // ran a single setTimeout with no countdown and the instruction
+  // text disappeared faster than you could read it.
+  const startAt = performance.now();
+  const renderCountdown = () => {
+    if (!calibrating) return;
+    const elapsed = performance.now() - startAt;
+    const remaining = Math.max(0, step.holdMs - elapsed);
+    setRecStatus(
+      `${step.label} — ${step.instruction} (${(remaining / 1000).toFixed(1)}s)`,
+      'loading',
+    );
+    if (remaining <= 0) {
+      captureCalibrationStep();
+      return;
+    }
+    setTimeout(renderCountdown, 100);
+  };
+  renderCountdown();
 }
 
 function captureCalibrationStep() {
@@ -508,12 +541,14 @@ function startRecording() {
   startTime = performance.now();
   retarget.reset();
 
-  // Leave the right pane in "live" (Mei mirror) mode during
-  // recording — the camera overlay already shows the live dots,
-  // so Mei-live serves as a "did detection catch what I did?"
-  // sanity read. On Stop we swap to "dots" for review.
-  enterRecordPaneMode('live');
-  stopDotsPlayback();
+  // Starting a fresh recording: hide the post-record review
+  // controls and stop any lingering review playback. Live dots
+  // will resume populating the right-pane canvas via
+  // onHolisticResults for the duration of the capture.
+  stopReviewPlayback();
+  showReviewControls(false);
+  const dotsC = document.getElementById('rec-dots-canvas');
+  if (dotsC) clearCanvas(dotsC);
 
   document.getElementById('btn-rec-start').disabled = true;
   document.getElementById('btn-rec-stop').disabled = false;
@@ -543,124 +578,127 @@ function stopRecording() {
   lastQuality = QualityGate.analyze(frames);
   showQualityResults(lastQuality);
 
-  // Enter dots-review mode: the user watches their own landmarks
-  // replay as a skeleton on a clean canvas (no avatar yet). They
-  // decide whether to keep the recording, then optionally trigger
-  // Map-to-Mei. This insulates the save decision from the
-  // retargeter's noise — users judge the CAPTURE, not Mei.
-  enterRecordPaneMode('dots');
-  startDotsPlayback();
+  // Show review controls + start a synced dots + Mei playback of
+  // the recording. Both panes play in lockstep so the user can
+  // compare "what MediaPipe caught" (dots) against "how Mei renders
+  // it" (avatar) on the same recording. The save decision is made
+  // on the dots side — it's the ground truth — but seeing Mei
+  // next to it tells the user whether Map-to-Mei will be useful.
+  showReviewControls(true);
+  startReviewPlayback();
   setRecStatus(
     `Recording captured (${frames.length} frames, ${((frames[frames.length-1].t - frames[0].t)/1000).toFixed(1)}s). `
-    + 'Review the dot playback. Map to Mei when happy.',
+    + 'Both panes play the same recording. Map to Mei to regenerate the avatar animation from these frames.',
     lastQuality.pass ? 'success' : 'info',
   );
 }
 
-// ─── Record right-pane mode ────────────────────────────────
+// ─── Review playback: dots + Mei in lockstep ───────────────
 //
-// The right pane on the Record tab shows one of three views:
+// Both the Mei viewport and the dots canvas are always visible
+// (side-by-side in the HTML). Their playback is driven from a
+// single RAF loop so they stay in sync: at each frame we draw
+// the dots AND push the same frame through the retargeter for
+// Mei. This is the multi-panel test the user asked for — you
+// see what MediaPipe captured and how Mei renders it, at once.
 //
-//   "live"  — Mei live-mirrors the camera. Default state. Useful as
-//             a weak reference during recording; not shown during
-//             review because live retargeting is noisy.
-//   "dots"  — Canvas renders captured-frame landmarks as a skeleton.
-//             What the user sees after Stop; the "ground-truth" of
-//             what was captured, no retargeting.
-//   "mei"   — Mei animation derived from the captured frames
-//             (Map-to-Mei result). Shown after the compute step.
+// Before recording: nothing is playing. Mei viewport live-mirrors
+// the camera (handled by onHolisticResults → retarget.applyFromMediaPipe).
+// The dots canvas also gets drawn from the same onHolisticResults
+// so live capture shows both panes in real time.
 //
-// enterRecordPaneMode toggles visibility of the viewport / canvas /
-// review controls. dotsPlaybackState carries the per-playback
-// cursor + RAF handle so stopDotsPlayback can cancel cleanly.
-function enterRecordPaneMode(mode) {
-  const meiVp = document.getElementById('rec-avatar-viewport');
-  const dotsC = document.getElementById('rec-dots-canvas');
-  const reviewControls = document.getElementById('rec-review-controls');
+// After Stop: live flow stops. reviewPlaybackState.rafId owns the
+// playback loop. When it's null, no playback is running.
 
-  if (meiVp)  meiVp.classList.toggle('hidden',  mode !== 'live' && mode !== 'mei');
-  if (dotsC)  dotsC.classList.toggle('hidden',  mode !== 'dots');
-  if (reviewControls) reviewControls.classList.toggle('hidden', mode === 'live');
+let reviewPlaybackState = { rafId: null, start: 0, i: 0 };
 
-  currentPaneMode = mode;
+function showReviewControls(show) {
+  const el = document.getElementById('rec-review-controls');
+  if (el) el.classList.toggle('hidden', !show);
 }
 
-let currentPaneMode = 'live';
-let dotsPlaybackState = { rafId: null, start: 0, i: 0 };
-
-function startDotsPlayback() {
+function startReviewPlayback() {
   if (!frames.length) return;
   const canvas = document.getElementById('rec-dots-canvas');
   if (!canvas) return;
-  stopDotsPlayback();
+  stopReviewPlayback();
 
-  dotsPlaybackState.start = performance.now();
-  dotsPlaybackState.i = 0;
+  reviewPlaybackState.start = performance.now();
+  reviewPlaybackState.i = 0;
   const baseT = frames[0].t ?? 0;
   const lastT = frames[frames.length - 1].t ?? 0;
 
+  // Mei side: reset the retarget state so playback starts from
+  // rest rather than wherever the live mirror left her.
+  if (retarget) retarget.reset();
+  if (avatar) avatar.setPlaying(true);
+
   const tick = () => {
-    const target = performance.now() - dotsPlaybackState.start + baseT;
-    while (dotsPlaybackState.i < frames.length - 1
-           && frames[dotsPlaybackState.i + 1].t <= target) {
-      dotsPlaybackState.i++;
+    const target = performance.now() - reviewPlaybackState.start + baseT;
+    while (reviewPlaybackState.i < frames.length - 1
+           && frames[reviewPlaybackState.i + 1].t <= target) {
+      reviewPlaybackState.i++;
     }
     const info = document.getElementById('rec-review-info');
-    if (info) info.textContent = `${dotsPlaybackState.i + 1} / ${frames.length}`;
+    if (info) info.textContent = `${reviewPlaybackState.i + 1} / ${frames.length}`;
 
     if (target >= lastT) {
-      drawSkeleton(canvas, frames[frames.length - 1]);
-      dotsPlaybackState.rafId = null;
+      const last = frames[frames.length - 1];
+      drawSkeleton(canvas, last);
+      renderPreviewFrame(last);
+      if (avatar) avatar.setPlaying(false);
+      reviewPlaybackState.rafId = null;
+      setRecStatus('Playback complete. Map to Mei, or save as dots.', 'info');
       return;
     }
-    drawSkeleton(canvas, frames[dotsPlaybackState.i]);
-    dotsPlaybackState.rafId = requestAnimationFrame(tick);
+
+    const a = frames[reviewPlaybackState.i];
+    const b = frames[reviewPlaybackState.i + 1];
+    const span = Math.max(b.t - a.t, 1);
+    const u = Math.min(Math.max((target - a.t) / span, 0), 1);
+    const blended = interp(a, b, u);
+    drawSkeleton(canvas, blended);
+    renderPreviewFrame(blended);
+    reviewPlaybackState.rafId = requestAnimationFrame(tick);
   };
   tick();
 }
 
-function stopDotsPlayback() {
-  if (dotsPlaybackState.rafId) cancelAnimationFrame(dotsPlaybackState.rafId);
-  dotsPlaybackState.rafId = null;
+function stopReviewPlayback() {
+  if (reviewPlaybackState.rafId) cancelAnimationFrame(reviewPlaybackState.rafId);
+  reviewPlaybackState.rafId = null;
+  if (avatar) avatar.setPlaying(false);
 }
 
 // ─── Map-to-Mei compute step ───────────────────────────────
 //
-// Takes the captured landmark frames and produces a Mei animation.
-// v1: runs the existing retargeting pipeline frame-by-frame on
-// timestamps, same as previewRecording, but off the record-review
-// pane so the user sees it next to (instead of instead of) the
-// dots they just approved.
-//
-// Future (same function signature): apply post-capture smoothing
-// before retargeting, and/or match the recording against the
-// curated library and swap in the closest canonical sign. The UI
-// path and storage don't change — we save landmarks and let
-// playback produce Mei.
+// v1: just re-runs the synced review playback, which drives both
+// the dots canvas AND Mei from the saved frames. Semantically the
+// "compute" hasn't done anything extra yet — the seam is here so
+// v2 can add post-capture smoothing or library-matching before
+// replaying. Naming stays "Map to Mei" so the UX label survives.
 async function mapToMei() {
   if (!frames.length) return;
   setRecStatus('Mapping to Mei…', 'loading');
-  stopDotsPlayback();
-  enterRecordPaneMode('mei');
-  // Small delay so the pane swap paints before the heavy work.
+  stopReviewPlayback();
   await new Promise(r => setTimeout(r, 30));
-  previewRecording();
+  startReviewPlayback();
 }
 
 function saveDotsOnly() {
   // Same save path as the existing Save button — the stored JSON
   // contains raw landmarks; "dots only" vs "mapped to Mei" is a
   // viewer-side rendering choice, not a schema difference. This
-  // button exists so the user can commit without running the
-  // (slower) Map-to-Mei step first.
+  // button exists so the user can commit without running another
+  // Map-to-Mei pass first.
   saveRecording();
 }
 
 function discardAndReRecord() {
-  stopDotsPlayback();
+  stopReviewPlayback();
   const canvas = document.getElementById('rec-dots-canvas');
   if (canvas) clearCanvas(canvas);
-  enterRecordPaneMode('live');
+  showReviewControls(false);
   discardRecording();
   setRecStatus('Ready. Press Record to try again.', 'info');
 }

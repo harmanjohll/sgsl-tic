@@ -93,23 +93,24 @@
       <div id="rec-status" class="status status-info">Enter a sign label and click Record.</div>
     </section>
     <section class="viewer">
-      <!-- Right-pane modes for Record:
-           - "live":     Mei mirrors the camera in real-time. Default before
-                         recording; handy as a reference but imperfect (see
-                         the plan: single-webcam retargeting has a ceiling).
-           - "dots":     Dot playback of the captured frames. Shown after
-                         Stop so the user can review what was actually
-                         tracked before committing to Map-to-Mei.
-           - "mei":      Mei animation derived from the captured frames
-                         (computed by Map-to-Mei). Shown after the compute
-                         step completes.
-           Only one mode is visible at a time; swap via the "hidden" class. -->
-      <div id="rec-avatar-viewport" class="viewport"></div>
-      <canvas id="rec-dots-canvas" class="viewport hidden" width="640" height="480"></canvas>
+      <!-- Side-by-side comparison pane. Both panels are always
+           visible so the user can compare what was captured (dots)
+           against how it renders on the avatar (Mei), in real time
+           during recording AND during playback after Stop. -->
+      <div class="rec-compare">
+        <div class="rec-compare-cell">
+          <div class="rec-compare-label">Avatar (Mei)</div>
+          <div id="rec-avatar-viewport" class="viewport rec-compare-body"></div>
+        </div>
+        <div class="rec-compare-cell">
+          <div class="rec-compare-label">Dots (what MediaPipe captured)</div>
+          <canvas id="rec-dots-canvas" class="viewport rec-compare-body" width="640" height="480"></canvas>
+        </div>
+      </div>
 
       <div id="rec-review-controls" class="rec-review-controls hidden">
         <div class="control-row">
-          <button id="btn-review-play" class="btn">▶ Play dots</button>
+          <button id="btn-review-play" class="btn">▶ Play both</button>
           <button id="btn-review-scrub" class="btn">■ Stop</button>
           <span id="rec-review-info" class="frame-info">0 / 0</span>
         </div>
