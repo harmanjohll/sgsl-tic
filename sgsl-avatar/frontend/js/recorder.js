@@ -35,9 +35,29 @@ const FRAMING_STREAK_REQUIRED = 30;  // ~1s at 30fps
 let latestFraming = null;    // {ok, score, reasons[]}
 
 // Calibration state.
+//
+// We capture a small library of "anchor poses" — known body
+// positions the user holds for ~1s each. These anchors give the
+// retargeting layer (and quality scoring) a personal reference for
+// what the user's body actually looks like at signing extremes
+// instead of guessing from per-frame geometry alone.
+//
+// CALIB_POSES is the script the user steps through. Each entry:
+//   { id, label, instruction, holdMs }
+// id is short (saved with the calibration), label is what the
+// button shows during that step, instruction is the user prompt.
+const CALIB_POSES = [
+  { id: 'rest',     label: 'Step 1/5: arms at sides',        instruction: 'Stand naturally. Arms relaxed at your sides. Hold still.', holdMs: 1500 },
+  { id: 'r_chest',  label: 'Step 2/5: right hand at chest',  instruction: 'Right hand flat at your chest, palm toward camera. Hold still.', holdMs: 1500 },
+  { id: 'r_face',   label: 'Step 3/5: right hand at face',   instruction: 'Right hand at face level, palm toward camera. Hold still.', holdMs: 1500 },
+  { id: 'l_chest',  label: 'Step 4/5: left hand at chest',   instruction: 'Left hand flat at your chest, palm toward camera. Hold still.', holdMs: 1500 },
+  { id: 'l_face',   label: 'Step 5/5: left hand at face',    instruction: 'Left hand at face level, palm toward camera. Hold still.', holdMs: 1500 },
+];
+
 let calibrating = false;
-let calibBuf = [];           // pose frames captured during calibration
-let calibBaseline = null;    // persisted baseline for this session
+let calibStepIdx = 0;        // which CALIB_POSES entry we're on
+let calibStepBuf = [];       // pose frames captured during the current step
+let calibBaseline = null;    // full calibration profile for this session
 
 // ─── Init ───────────────────────────────────────────────────
 export async function init() {
@@ -62,7 +82,7 @@ export async function init() {
   const startBtn = document.getElementById('btn-rec-start');
   if (startBtn) startBtn.disabled = true;
 
-  setRecStatus('Stand so the green guide turns solid, then calibrate, then record.', 'info');
+  setRecStatus('Stand so the green guide turns solid. Then calibrate (you will be guided through 5 quick poses).', 'info');
 }
 
 // Auto-init when module is imported
@@ -123,7 +143,7 @@ function onHolisticResults(results) {
   // 4) Capture: record frame or calibration sample.
   const frame = extractFrame(results);
   if (calibrating && frame?.pose) {
-    calibBuf.push(frame);
+    calibStepBuf.push(frame);
   } else if (recording && frame) {
     frame.t = performance.now() - startTime;
     frames.push(frame);
@@ -182,49 +202,163 @@ function updateFramingGate(fr) {
 }
 
 // ─── Calibration ────────────────────────────────────────────
-const CALIB_MS = 1500;
+//
+// Multi-pose calibration: walk the user through CALIB_POSES,
+// holding each for ~1.5s. For each, average a small window of
+// pose+hand landmarks to get a stable anchor sample. The full
+// set of anchors is stored as calibBaseline.poses[] so future
+// passes (and recorded signs) can normalize against the user's
+// own body proportions and range of motion instead of guessing
+// from per-frame geometry.
+
 function startCalibration() {
   if (!framingOk || recording) return;
-  calibBuf = [];
   calibrating = true;
-  setRecStatus('Calibrating — hold still with arms at sides...', 'loading');
-  setTimeout(() => finishCalibration(), CALIB_MS);
+  calibStepIdx = 0;
+  calibStepBuf = [];
+  // Start the first step on next tick to give the user a moment
+  // to read the instruction before frames are captured.
+  calibBaseline = {
+    poses: [],
+    capturedAt: new Date().toISOString(),
+  };
+  runCalibrationStep();
+}
+
+function runCalibrationStep() {
+  if (!calibrating) return;
+  if (calibStepIdx >= CALIB_POSES.length) {
+    finishCalibration();
+    return;
+  }
+  const step = CALIB_POSES[calibStepIdx];
+  calibStepBuf = [];
+  setRecStatus(`${step.label} — ${step.instruction}`, 'loading');
+  setTimeout(() => captureCalibrationStep(), step.holdMs);
+}
+
+function captureCalibrationStep() {
+  if (!calibrating) return;
+  const step = CALIB_POSES[calibStepIdx];
+  const buf = calibStepBuf;
+
+  if (buf.length < 5) {
+    setRecStatus(`Calibration step "${step.id}" failed — not enough pose frames. Restarting calibration.`, 'error');
+    calibrating = false;
+    calibBaseline = null;
+    updateFramingGate(latestFraming);
+    return;
+  }
+
+  // Aggregate this step into one anchor sample.
+  // Averages: shoulder positions, wrist positions per side,
+  // shoulder width, head-to-shoulder distance, shoulder midpoint.
+  // Pose landmark indices: 0 nose, 11 L-shoulder, 12 R-shoulder,
+  // 13 L-elbow, 14 R-elbow, 15 L-wrist, 16 R-wrist.
+  const acc = {
+    nose: [0, 0], lSh: [0, 0], rSh: [0, 0],
+    lEl: [0, 0], rEl: [0, 0], lWr: [0, 0], rWr: [0, 0],
+    sw: 0, hsd: 0,
+  };
+  let n = 0;
+  for (const f of buf) {
+    const p = f.pose;
+    if (!p || !p[0] || !p[11] || !p[12]) continue;
+    const N = p[0], L = p[11], R = p[12];
+    acc.nose[0] += N[0]; acc.nose[1] += N[1];
+    acc.lSh[0] += L[0]; acc.lSh[1] += L[1];
+    acc.rSh[0] += R[0]; acc.rSh[1] += R[1];
+    if (p[13]) { acc.lEl[0] += p[13][0]; acc.lEl[1] += p[13][1]; }
+    if (p[14]) { acc.rEl[0] += p[14][0]; acc.rEl[1] += p[14][1]; }
+    if (p[15]) { acc.lWr[0] += p[15][0]; acc.lWr[1] += p[15][1]; }
+    if (p[16]) { acc.rWr[0] += p[16][0]; acc.rWr[1] += p[16][1]; }
+    acc.sw += Math.hypot(L[0] - R[0], L[1] - R[1]);
+    const mx = (L[0] + R[0]) / 2, my = (L[1] + R[1]) / 2;
+    acc.hsd += Math.hypot(mx - N[0], my - N[1]);
+    n++;
+  }
+
+  if (!n) {
+    setRecStatus(`Calibration step "${step.id}" failed — no valid pose. Restarting.`, 'error');
+    calibrating = false;
+    calibBaseline = null;
+    updateFramingGate(latestFraming);
+    return;
+  }
+
+  const norm = (v) => [v[0] / n, v[1] / n];
+  calibBaseline.poses.push({
+    id: step.id,
+    nose: norm(acc.nose),
+    leftShoulder:  norm(acc.lSh),
+    rightShoulder: norm(acc.rSh),
+    leftElbow:     norm(acc.lEl),
+    rightElbow:    norm(acc.rEl),
+    leftWrist:     norm(acc.lWr),
+    rightWrist:    norm(acc.rWr),
+    shoulderWidth:  acc.sw / n,
+    headToShoulder: acc.hsd / n,
+    samples: n,
+  });
+
+  calibStepIdx++;
+  // Brief pause so the user can transition to the next pose.
+  setTimeout(() => runCalibrationStep(), 600);
 }
 
 function finishCalibration() {
   calibrating = false;
-  if (calibBuf.length < 10) {
-    setRecStatus('Calibration failed (not enough pose frames). Try again.', 'error');
-    return;
+  // Derive top-level summary fields for backward compat with
+  // older quality-gate code that read shoulderWidth / shoulderMid
+  // straight off calibBaseline.
+  const rest = calibBaseline.poses.find(p => p.id === 'rest') || calibBaseline.poses[0];
+  if (rest) {
+    calibBaseline.shoulderWidth  = rest.shoulderWidth;
+    calibBaseline.headToShoulder = rest.headToShoulder;
+    calibBaseline.shoulderMid    = [
+      (rest.leftShoulder[0] + rest.rightShoulder[0]) / 2,
+      (rest.leftShoulder[1] + rest.rightShoulder[1]) / 2,
+    ];
   }
+  // Per-arm reach extents derived from the anchors. Used by the
+  // retargeter to normalize a frame's shoulder→wrist length to a
+  // [0..1] reach scalar (helps invariance to user height /
+  // distance from the camera).
+  calibBaseline.armReach = computeArmReach(calibBaseline.poses);
 
-  // Average shoulder width + head-to-shoulder distance + shoulder midpoint.
-  // Landmarks: 11 L-shoulder, 12 R-shoulder, 0 nose.
-  let sw = 0, hsd = 0, midx = 0, midy = 0, n = 0;
-  for (const f of calibBuf) {
-    const p = f.pose;
-    if (!p || !p[11] || !p[12] || !p[0]) continue;
-    const L = p[11], R = p[12], N = p[0];
-    sw  += Math.hypot(L[0] - R[0], L[1] - R[1]);
-    const mx = (L[0] + R[0]) / 2, my = (L[1] + R[1]) / 2;
-    hsd += Math.hypot(mx - N[0], my - N[1]);
-    midx += mx; midy += my;
-    n++;
+  setRecStatus(`Calibration complete (${calibBaseline.poses.length} anchors). You can record now.`, 'success');
+  // Push reach data into the live retarget so the next frame
+  // benefits immediately; for playback it travels with the saved
+  // sign JSON.
+  if (retarget) retarget.setCalibration(calibBaseline);
+  updateFramingGate(latestFraming);
+}
+
+/**
+ * From the captured anchors, find the longest shoulder→wrist
+ * length on each side. That length corresponds to "fully
+ * extended" for this user at this distance from the camera.
+ * The retargeter uses it to scale per-frame reach into a
+ * normalized 0..1 range.
+ */
+function computeArmReach(poses) {
+  let leftMax = 0, rightMax = 0;
+  for (const p of poses) {
+    const lL = Math.hypot(p.leftWrist[0] - p.leftShoulder[0],
+                          p.leftWrist[1] - p.leftShoulder[1]);
+    const rL = Math.hypot(p.rightWrist[0] - p.rightShoulder[0],
+                          p.rightWrist[1] - p.rightShoulder[1]);
+    if (lL > leftMax) leftMax = lL;
+    if (rL > rightMax) rightMax = rL;
   }
-  if (!n) {
-    setRecStatus('Calibration failed (no valid pose). Try again.', 'error');
-    return;
-  }
-  calibBaseline = {
-    shoulderWidth: sw / n,
-    headToShoulder: hsd / n,
-    shoulderMid: [midx / n, midy / n],
-    frames: n,
-    capturedAt: new Date().toISOString(),
+  // Floor at the rest shoulder width × 0.6 to avoid divide-by-tiny
+  // when calibration was done with arms barely raised.
+  const rest = poses.find(p => p.id === 'rest');
+  const minReach = rest ? rest.shoulderWidth * 0.6 : 0.15;
+  return {
+    left:  Math.max(leftMax, minReach),
+    right: Math.max(rightMax, minReach),
   };
-  calibBuf = [];
-  setRecStatus('Calibration captured. You can record now.', 'success');
-  updateFramingGate(latestFraming);  // re-enable record button
 }
 
 // ─── Camera Overlay ─────────────────────────────────────────

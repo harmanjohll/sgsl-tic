@@ -161,6 +161,10 @@ async function playSign(label) {
 
     seq = frames;
     retarget.reset();
+    // Honor the per-signer calibration baked into the sign so
+    // playback uses the same arm-reach normalization the
+    // recorder did. Falls back to no calibration for v1 signs.
+    retarget.setCalibration(data.calibration || null);
     fi = 0;
     playing = true; paused = false;
     avatar.setPlaying(true);

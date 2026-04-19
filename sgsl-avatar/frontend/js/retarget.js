@@ -62,6 +62,7 @@ export class SMPLXRetarget {
     this._dc = 0;
     this._video = null;
     this._avatar = null;
+    this._calibration = null;
     // Hysteresis counters per arm. Treated as "arm is on" whenever > 0.
     this._rightArmStreak = 0;
     this._leftArmStreak = 0;
@@ -77,6 +78,15 @@ export class SMPLXRetarget {
 
   /** Avatar instance so we can poke its rest-rebias watchdog. */
   setAvatar(avatar) { this._avatar = avatar || null; }
+
+  /**
+   * Optional per-signer calibration captured by the multi-pose
+   * sequence. Currently used to normalize the per-frame
+   * shoulder→wrist reach against the user's measured maximum,
+   * so the same gesture produces the same Mei pose across
+   * different signers / distances from the camera.
+   */
+  setCalibration(calib) { this._calibration = calib || null; }
 
   _rigRotation(vrm, name, rotation, dampener = 1, lerpAmount = 0.3) {
     if (!vrm || !rotation) return;
@@ -218,6 +228,23 @@ export class SMPLXRetarget {
     return v.normalize();
   }
 
+  /**
+   * Reach scalar in [0..1] for an arm: how extended the shoulder→wrist
+   * vector is relative to the user's calibrated maximum reach on
+   * that side. Returns null when no calibration is available.
+   *
+   * Used by callers that want to know "is this arm fully extended"
+   * (e.g., for future depth inference, or to tighten per-pose
+   * dampening at extremes). Does not change the direction.
+   */
+  _armReach(side, shoulder2D, wrist2D) {
+    if (!this._calibration?.armReach || !shoulder2D || !wrist2D) return null;
+    const len = Math.hypot(wrist2D.x - shoulder2D.x, wrist2D.y - shoulder2D.y);
+    const max = side === 'right' ? this._calibration.armReach.right : this._calibration.armReach.left;
+    if (!max) return null;
+    return Math.min(1, len / max);
+  }
+
   _writeHand(vrm, side, riggedHand) {
     if (!riggedHand) return;
     const wrist = riggedHand[`${side}Wrist`];
@@ -328,11 +355,17 @@ export class SMPLXRetarget {
       lms?.[0] || pose2DLandmarks?.[poseWristIdx] || null
     );
 
-    // Pick the elbow: pose elbow if visible, else midpoint of
-    // shoulder + wrist (straight-arm fallback).
+    // Pick the elbow: pose elbow if it's clearly visible, else
+    // fall back to the midpoint of shoulder + wrist (gives a
+    // "straight-arm" pose that places the hand correctly).
+    //
+    // The visibility bar is set high (0.75) because MP often
+    // returns landmarks with vis ~0.5 even when the elbow is
+    // off-frame and hallucinated — trusting those was the source
+    // of "awkward forward rotation" artifacts in the Apr 19 test.
     const pickElbow = (poseElbowIdx, shoulder, wrist) => {
       const e = pose2DLandmarks?.[poseElbowIdx];
-      if (e && (e.visibility ?? 1) >= 0.5) return e;
+      if (e && (e.visibility ?? 0) >= 0.75) return e;
       if (!shoulder || !wrist) return null;
       return {
         x: (shoulder.x + wrist.x) / 2,
@@ -364,11 +397,11 @@ export class SMPLXRetarget {
         const el = pickElbow(13, sh, wr);
         if (sh && el) {
           const upDir = this._imageToWorldArmDir(sh, el);
-          if (upDir) this._pointBoneInWorld(vrm, "RightUpperArm", upDir, 0.5);
+          if (upDir) this._pointBoneInWorld(vrm, "RightUpperArm", upDir, 0.7);
         }
         if (el && wr) {
           const loDir = this._imageToWorldArmDir(el, wr);
-          if (loDir) this._pointBoneInWorld(vrm, "RightLowerArm", loDir, 0.5);
+          if (loDir) this._pointBoneInWorld(vrm, "RightLowerArm", loDir, 0.7);
         }
       } else if (this._avatar) {
         this._avatar.slerpToRest(["RightUpperArm", "RightLowerArm", "RightHand"], 0.18);
@@ -380,11 +413,11 @@ export class SMPLXRetarget {
         const el = pickElbow(14, sh, wr);
         if (sh && el) {
           const upDir = this._imageToWorldArmDir(sh, el);
-          if (upDir) this._pointBoneInWorld(vrm, "LeftUpperArm", upDir, 0.5);
+          if (upDir) this._pointBoneInWorld(vrm, "LeftUpperArm", upDir, 0.7);
         }
         if (el && wr) {
           const loDir = this._imageToWorldArmDir(el, wr);
-          if (loDir) this._pointBoneInWorld(vrm, "LeftLowerArm", loDir, 0.5);
+          if (loDir) this._pointBoneInWorld(vrm, "LeftLowerArm", loDir, 0.7);
         }
       } else if (this._avatar) {
         this._avatar.slerpToRest(["LeftUpperArm", "LeftLowerArm", "LeftHand"], 0.18);
