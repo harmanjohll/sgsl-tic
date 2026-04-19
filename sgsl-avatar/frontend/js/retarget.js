@@ -20,14 +20,21 @@
       look stick-like at extreme angles but the hand position is
       what matters for sign legibility.
 
-   2. HANDS (fingers + wrist) use Kalidokit.Hand.solve from the
-      21 hand-landmark feed. Per-landmark direct pointing was
-      attempted and reverted (see plan iteration 5c): setFromUnitVectors
-      has a twist-axis singularity at near-antiparallel vectors,
-      and each finger bone ends up "rolled" at random around its
-      length when the user's hand orientation is far from rest.
-      Bend-angle-only retargeting is the next approach — tracked
-      in the plan, not yet implemented.
+   2. HANDS — split between the WRIST and the FINGERS:
+      - Wrist (palm orientation): Kalidokit.Hand.solve output.
+        Works fine; the 21-landmark solve handles palm rotation
+        reliably.
+      - Fingers: bend-angle-only retargeting. For each of the 30
+        finger bones we compute a single flexion angle from
+        MediaPipe's hand landmark chain (MCP→PIP→DIP→tip) and
+        apply it as a local-X rotation on top of the bone's rest
+        local quaternion. No world-space math, no twist ambiguity.
+        Replaces Kalidokit's finger output (inconsistent) and the
+        reverted direct-pointing attempt (twist singularity at
+        near-antiparallel rest/target vectors).
+        Known limitations: no splay between fingers, thumb
+        opposition underrepresented, 2D bend only (misses
+        out-of-plane curl for palm-toward-camera poses).
 
    3. FACE is still driven by Kalidokit.Face.solve.
 
@@ -57,6 +64,10 @@ const WRIST_VIS_THRESH = 0.5;
 // consecutive failure frames before we start slerping it back to
 // rest. 5 frames at ~30 fps = ~160 ms grace window.
 const ARM_HYSTERESIS_FRAMES = 5;
+
+// Shared, reusable axis vector for local-X finger bend rotations.
+// Avoids allocating a new THREE.Vector3 per finger per frame.
+const _AXIS_X = new THREE.Vector3(1, 0, 0);
 
 let oldLookTarget = new THREE.Euler();
 
@@ -250,35 +261,111 @@ export class SMPLXRetarget {
   }
 
   _writeHand(vrm, side, riggedHand) {
+    // ONLY writes the wrist (palm) quaternion. Finger bones are
+    // handled separately by _writeFingersBendOnly so we can use
+    // a different algorithm for them (bend-angle-only) than for
+    // the wrist (Kalidokit's hand-solve palm rotation).
     if (!riggedHand) return;
     const wrist = riggedHand[`${side}Wrist`];
-    if (wrist) {
-      // Drop the pose-solver's wrist z. In laptop crops, pose-z is
-      // hallucinated and tilts the palm onto a bad plane. Use only
-      // the hand-solve's own xyz.
-      this._rigRotation(vrm, `${side}Hand`, {
-        x: wrist.x,
-        y: wrist.y,
-        z: wrist.z ?? 0,
-      });
+    if (!wrist) return;
+    // Drop the pose-solver's wrist z. In laptop crops, pose-z is
+    // hallucinated and tilts the palm onto a bad plane. Use only
+    // the hand-solve's own xyz.
+    this._rigRotation(vrm, `${side}Hand`, {
+      x: wrist.x,
+      y: wrist.y,
+      z: wrist.z ?? 0,
+    });
+  }
+
+  // ─── Bend-angle-only finger retargeting ───────────────────
+  //
+  // Per-landmark direct pointing (8c5e2c9, reverted) failed because
+  // setFromUnitVectors has a twist-axis singularity at near-
+  // antiparallel vectors. That approach tried to match the FULL
+  // finger orientation in world space. The anatomy doesn't need
+  // that: human finger joints have essentially one degree of
+  // freedom (bend around the flexion/extension axis — you can't
+  // twist a knuckle). So we extract only the bend angle per joint
+  // and leave the bone's local Y and Z at rest. No twist
+  // singularity because we never rotate around the bone's length.
+  //
+  // Bend angle at joint B, given previous landmark A and next
+  // landmark C, is the angle between the incoming segment A→B and
+  // the outgoing segment B→C. 0° when the finger is straight, up
+  // to ~π when fully folded.
+  //
+  //   Proximal     bend at MCP:  angle(wrist→MCP, MCP→PIP)
+  //   Intermediate bend at PIP:  angle(MCP→PIP,   PIP→DIP)
+  //   Distal       bend at DIP:  angle(PIP→DIP,   DIP→tip)
+  //
+  // For VRM 0.x humanoid rigs (Mei's is VRoid-standard), finger
+  // bones bend around their LOCAL X axis — rotation.x = bend
+  // curls the finger toward the palm, rotation.x = 0 keeps it
+  // straight. Same sign for both hands (the rig is symmetric).
+  //
+  // We start each frame from the bone's rest LOCAL quaternion
+  // (which carries the natural VRoid resting curl) and compose
+  // an X-axis rotation on top. No world-space math, no parent
+  // chain dependence, no twist.
+  _writeFingersBendOnly(vrm, side, handLandmarks) {
+    if (!handLandmarks || handLandmarks.length < 21) return;
+    const wristLm = handLandmarks[0];
+    if (!wristLm) return;
+
+    // MediaPipe hand landmark indices per finger: [MCP, PIP, DIP, tip].
+    const FINGERS = [
+      ['Thumb',  [1, 2, 3, 4]],
+      ['Index',  [5, 6, 7, 8]],
+      ['Middle', [9, 10, 11, 12]],
+      ['Ring',   [13, 14, 15, 16]],
+      ['Little', [17, 18, 19, 20]],
+    ];
+
+    for (const [finger, ids] of FINGERS) {
+      const [mcp, pip, dip, tip] = ids.map(i => handLandmarks[i]);
+      if (!mcp || !pip || !dip || !tip) continue;
+
+      const bProx = this._bendAngle2D(wristLm, mcp, pip);
+      const bInt  = this._bendAngle2D(mcp,     pip, dip);
+      const bDist = this._bendAngle2D(pip,     dip, tip);
+
+      this._applyFingerBend(vrm, `${side}${finger}Proximal`,     bProx);
+      this._applyFingerBend(vrm, `${side}${finger}Intermediate`, bInt);
+      this._applyFingerBend(vrm, `${side}${finger}Distal`,       bDist);
     }
-    // Fingers: Kalidokit's hand-solver output. Direct
-    // landmark→bone pointing was tried in 8c5e2c9 but introduced
-    // severe finger distortion because Quaternion.setFromUnitVectors
-    // chooses an arbitrary rotation axis for near-antiparallel vectors
-    // (finger rest direction down vs. target direction up, when the
-    // user raises their hand) — twist around the bone's length is
-    // unconstrained, so fingers look curled at random angles. The
-    // next try will be bend-angle-only: compute a single bend axis
-    // per segment and leave twist at rest. Until then, Kalidokit's
-    // solver is the less-wrong option.
-    for (const f of FINGER_NAMES) {
-      for (const s of FINGER_SEGMENTS) {
-        const key = `${side}${f}${s}`;
-        const rot = riggedHand[key];
-        if (rot) this._rigRotation(vrm, key, rot);
-      }
-    }
+  }
+
+  _bendAngle2D(a, b, c) {
+    // Angle between segments A→B and B→C. 0 when straight;
+    // grows as the chain bends. 2D only (uses x, y; ignores
+    // z for now — hand landmark z is relative depth and
+    // adding it noisily over-rotates fingers for palm-forward
+    // poses where the in-plane bend is small).
+    const inX = b.x - a.x, inY = b.y - a.y;
+    const outX = c.x - b.x, outY = c.y - b.y;
+    const inLen = Math.hypot(inX, inY);
+    const outLen = Math.hypot(outX, outY);
+    if (inLen < 1e-5 || outLen < 1e-5) return 0;
+    const cos = (inX * outX + inY * outY) / (inLen * outLen);
+    return Math.acos(Math.max(-1, Math.min(1, cos)));
+  }
+
+  _applyFingerBend(vrm, boneName, bendRad) {
+    const BN = THREE.VRMSchema.HumanoidBoneName;
+    const key = BN[boneName];
+    const bone = vrm?.humanoid?.getBoneNode(key);
+    if (!bone) return;
+    const rest = this._avatar?._restTargets?.[key];
+    if (!rest) return;
+
+    // target local quat = rest * deltaX(bend). Starting from rest
+    // keeps the VRoid default finger curl as the "zero bend" pose.
+    const delta = new THREE.Quaternion().setFromAxisAngle(
+      _AXIS_X, bendRad,
+    );
+    const target = rest.clone().multiply(delta);
+    bone.quaternion.slerp(target, 0.6);
   }
 
   applyFromMediaPipe(vrm, results) {
@@ -536,14 +623,30 @@ export class SMPLXRetarget {
     // singularity at near-antiparallel vectors (rest dir down vs
     // raised-hand target dir up). See the plan file "iteration 5c"
     // for the next approach (bend-angle only per segment).
+    // Hand + finger writes.
+    //
+    //   wrist (palm orientation)  → Kalidokit Hand.solve, applied
+    //                               by _writeHand.
+    //   finger bones              → bend-angle-only from MediaPipe
+    //                               hand landmarks, applied by
+    //                               _writeFingersBendOnly.
+    //
+    // Order matters: the wrist write must happen first so the
+    // finger bones have a settled parent world quaternion when
+    // their rest LOCAL quat is composed with the per-frame bend.
+    // (We don't read parent world quats in bend-only — the math
+    // is purely local — but keeping this order preserves the
+    // invariant if we later blend world-space finger corrections.)
     if (handDetected(leftHandLandmarks)) {
       riggedLeftHand = Kalidokit.Hand.solve(leftHandLandmarks, "Left");
       this._writeHand(vrm, "Left", riggedLeftHand);
+      this._writeFingersBendOnly(vrm, "Left", leftHandLandmarks);
     }
 
     if (handDetected(rightHandLandmarks)) {
       riggedRightHand = Kalidokit.Hand.solve(rightHandLandmarks, "Right");
       this._writeHand(vrm, "Right", riggedRightHand);
+      this._writeFingersBendOnly(vrm, "Right", rightHandLandmarks);
     }
 
     return { hasPose: !!riggedPose, hasLeft: !!riggedLeftHand, hasRight: !!riggedRightHand };
