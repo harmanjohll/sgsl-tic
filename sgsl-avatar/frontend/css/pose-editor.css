@@ -50,9 +50,45 @@
 .bone-controls {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 50vh;
+  gap: 8px;
+  max-height: 60vh;
   overflow-y: auto;
+}
+
+.bone-group {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.bone-group > .bone-group-title {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: #aabbff;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 0;
+  user-select: none;
+  list-style: none;
+}
+
+.bone-group > .bone-group-title::-webkit-details-marker { display: none; }
+
+.bone-group > .bone-group-title::before {
+  content: '▶ ';
+  display: inline-block;
+  font-size: 9px;
+  margin-right: 4px;
+  transition: transform 0.15s;
+}
+
+.bone-group[open] > .bone-group-title::before {
+  transform: rotate(90deg);
+}
+
+.bone-group .bone-row {
+  margin-top: 4px;
 }
 
 .bone-row {

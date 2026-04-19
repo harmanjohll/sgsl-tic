@@ -20,16 +20,64 @@
 
 import { SMPLXAvatar } from './avatar.js';
 
-// Bones the editor exposes. PascalCase here matches the backend's
-// REQUIRED_CURATED_BONES check and the player's quaternion writer.
-// First six are mandatory (validated server-side); the rest are
-// optional but commonly useful for SgSL signs.
-const EDITABLE_BONES = [
-  'RightUpperArm', 'LeftUpperArm',
-  'RightLowerArm', 'LeftLowerArm',
-  'RightHand',     'LeftHand',
-  'Neck', 'Chest', 'Spine',
+// Bones the editor exposes, grouped for the UI. PascalCase here
+// matches the backend's REQUIRED_CURATED_BONES check and the
+// player's quaternion writer. Required-by-backend bones live in
+// "Arms" and "Hands"; everything else is optional but useful for
+// SgSL hand-shape configuration (the "and" sign and similar).
+const BONE_GROUPS = [
+  {
+    id: 'arms', label: 'Arms', defaultOpen: true,
+    bones: ['RightUpperArm', 'LeftUpperArm', 'RightLowerArm', 'LeftLowerArm'],
+  },
+  {
+    id: 'hands', label: 'Wrists', defaultOpen: true,
+    bones: ['RightHand', 'LeftHand'],
+  },
+  {
+    id: 'fingers_r', label: 'Right hand fingers', defaultOpen: false,
+    bones: [
+      'RightThumbProximal',  'RightThumbIntermediate',  'RightThumbDistal',
+      'RightIndexProximal',  'RightIndexIntermediate',  'RightIndexDistal',
+      'RightMiddleProximal', 'RightMiddleIntermediate', 'RightMiddleDistal',
+      'RightRingProximal',   'RightRingIntermediate',   'RightRingDistal',
+      'RightLittleProximal', 'RightLittleIntermediate', 'RightLittleDistal',
+    ],
+  },
+  {
+    id: 'fingers_l', label: 'Left hand fingers', defaultOpen: false,
+    bones: [
+      'LeftThumbProximal',  'LeftThumbIntermediate',  'LeftThumbDistal',
+      'LeftIndexProximal',  'LeftIndexIntermediate',  'LeftIndexDistal',
+      'LeftMiddleProximal', 'LeftMiddleIntermediate', 'LeftMiddleDistal',
+      'LeftRingProximal',   'LeftRingIntermediate',   'LeftRingDistal',
+      'LeftLittleProximal', 'LeftLittleIntermediate', 'LeftLittleDistal',
+    ],
+  },
+  {
+    id: 'torso', label: 'Torso & neck', defaultOpen: false,
+    bones: ['Neck', 'Chest', 'Spine'],
+  },
 ];
+
+// Flat list of every editable bone, derived from the groups above.
+// Exported for save/load + reset/mirror operations that need a
+// single linear bone roster.
+const EDITABLE_BONES = BONE_GROUPS.flatMap(g => g.bones);
+
+// Mirror pairs for the "Mirror L↔R" quick action. Right→Left only;
+// invoking the action copies right-side rotation to left side with
+// the appropriate axis flip. Includes fingers.
+const MIRROR_PAIRS = [
+  ['RightUpperArm', 'LeftUpperArm'],
+  ['RightLowerArm', 'LeftLowerArm'],
+  ['RightHand',     'LeftHand'],
+];
+for (const finger of ['Thumb', 'Index', 'Middle', 'Ring', 'Little']) {
+  for (const seg of ['Proximal', 'Intermediate', 'Distal']) {
+    MIRROR_PAIRS.push([`Right${finger}${seg}`, `Left${finger}${seg}`]);
+  }
+}
 
 const DEG = Math.PI / 180;
 const RAD2DEG = 180 / Math.PI;
@@ -66,36 +114,60 @@ function init() {
 function buildBoneControls() {
   const container = document.getElementById('bone-controls');
   container.innerHTML = '';
-  for (const boneName of EDITABLE_BONES) {
-    const node = getBoneNode(boneName);
-    if (!node) continue;
-    const row = document.createElement('div');
-    row.className = 'bone-row';
-    row.innerHTML = `<div class="bone-name">${boneName}</div>`;
 
-    for (const axis of ['x', 'y', 'z']) {
-      const initialDeg = (node.rotation[axis] || 0) * RAD2DEG;
-      const axisRow = document.createElement('div');
-      axisRow.className = 'bone-axis-row';
-      axisRow.innerHTML = `
-        <span>${axis.toUpperCase()}</span>
-        <input type="range" min="-180" max="180" step="1" value="${initialDeg.toFixed(0)}"
-               data-bone="${boneName}" data-axis="${axis}">
-        <span class="axis-val">${initialDeg.toFixed(0)}°</span>
-      `;
-      const input = axisRow.querySelector('input');
-      const valEl = axisRow.querySelector('.axis-val');
-      input.addEventListener('input', () => {
-        const deg = parseFloat(input.value);
-        valEl.textContent = `${deg.toFixed(0)}°`;
-        const n = getBoneNode(boneName);
-        if (!n) return;
-        n.rotation[axis] = deg * DEG;
-      });
-      row.appendChild(axisRow);
+  for (const group of BONE_GROUPS) {
+    const groupEl = document.createElement('details');
+    groupEl.className = 'bone-group';
+    if (group.defaultOpen) groupEl.open = true;
+    const summary = document.createElement('summary');
+    summary.className = 'bone-group-title';
+    summary.textContent = group.label;
+    groupEl.appendChild(summary);
+
+    let rendered = 0;
+    for (const boneName of group.bones) {
+      const node = getBoneNode(boneName);
+      if (!node) continue;  // VRM may not have every finger bone — silently skip
+      groupEl.appendChild(buildBoneRow(boneName, node));
+      rendered++;
     }
-    container.appendChild(row);
+    if (rendered === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'ed-hint';
+      empty.textContent = 'No bones in this group on this VRM.';
+      groupEl.appendChild(empty);
+    }
+    container.appendChild(groupEl);
   }
+}
+
+function buildBoneRow(boneName, node) {
+  const row = document.createElement('div');
+  row.className = 'bone-row';
+  row.innerHTML = `<div class="bone-name">${boneName}</div>`;
+
+  for (const axis of ['x', 'y', 'z']) {
+    const initialDeg = (node.rotation[axis] || 0) * RAD2DEG;
+    const axisRow = document.createElement('div');
+    axisRow.className = 'bone-axis-row';
+    axisRow.innerHTML = `
+      <span>${axis.toUpperCase()}</span>
+      <input type="range" min="-180" max="180" step="1" value="${initialDeg.toFixed(0)}"
+             data-bone="${boneName}" data-axis="${axis}">
+      <span class="axis-val">${initialDeg.toFixed(0)}°</span>
+    `;
+    const input = axisRow.querySelector('input');
+    const valEl = axisRow.querySelector('.axis-val');
+    input.addEventListener('input', () => {
+      const deg = parseFloat(input.value);
+      valEl.textContent = `${deg.toFixed(0)}°`;
+      const n = getBoneNode(boneName);
+      if (!n) return;
+      n.rotation[axis] = deg * DEG;
+    });
+    row.appendChild(axisRow);
+  }
+  return row;
 }
 
 function getBoneNode(boneName) {
@@ -153,15 +225,12 @@ function resetToRest() {
 
 function mirrorLR() {
   // Copy each Right* bone's local rotation to its Left* counterpart
-  // with the X component negated (Y rotation around vertical axis
-  // mirrors a humanoid limb to the other side in VRM 0.x rigs).
-  // This is a coarse helper; manual cleanup may still be needed.
-  const pairs = [
-    ['RightUpperArm', 'LeftUpperArm'],
-    ['RightLowerArm', 'LeftLowerArm'],
-    ['RightHand',     'LeftHand'],
-  ];
-  for (const [r, l] of pairs) {
+  // with Y and Z negated. This mirrors a humanoid limb across the
+  // vertical body plane in VRM 0.x rigs (verified empirically on
+  // arms — fingers follow the same convention because they're built
+  // off the hand bone). Coarse helper; manual cleanup may still be
+  // needed for asymmetric thumb poses.
+  for (const [r, l] of MIRROR_PAIRS) {
     const rNode = getBoneNode(r);
     const lNode = getBoneNode(l);
     if (!rNode || !lNode) continue;

@@ -143,6 +143,19 @@ export class SMPLXAvatar {
       BN.LeftUpperLeg, BN.LeftLowerLeg,
       BN.RightUpperLeg, BN.RightLowerLeg,
     ];
+
+    // Fingers — needed by the pose editor's "Reset to rest" and by
+    // the player's hard-snap-to-rest before curated playback so any
+    // finger the keyframes don't animate sits at its natural pose.
+    for (const side of ['Left', 'Right']) {
+      for (const finger of ['Thumb', 'Index', 'Middle', 'Ring', 'Little']) {
+        for (const seg of ['Proximal', 'Intermediate', 'Distal']) {
+          const key = BN[`${side}${finger}${seg}`];
+          if (key) bones.push(key);
+        }
+      }
+    }
+
     for (const b of bones) {
       const node = vrm.humanoid.getBoneNode(b);
       if (node) this._restTargets[b] = node.quaternion.clone();
